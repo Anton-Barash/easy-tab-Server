@@ -1,0 +1,29 @@
+{
+  "name": "easy_tab_server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test tests/*.test.js",
+    "pm2:start": "pm2 start ecosystem.config.js --env production",
+    "pm2:stop": "pm2 stop file-server",
+    "pm2:logs": "pm2 logs file-server"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@fastify/multipart": "^10.0.0",
+    "dotenv": "^17.4.2",
+    "fastify": "^5.8.5",
+    "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.1.3"
+  }
+}

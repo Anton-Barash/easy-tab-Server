@@ -1,0 +1,313 @@
+============================================================
+ИНСТРУКЦИЯ: НАСТРОЙКА СЕРВERA KINGSOFT CLOUD
+============================================================
+
+Сервер: STANDARD6 S6.2B (2 CPU, 4 GB RAM)
+OS: Ubuntu 24.04
+Region: CN South 1 (Guangzhou)
+
+============================================================
+ШАГ 1: ПОДКЛЮЧЕНИЕ К СЕРВЕРУ
+============================================================
+
+1. Получите IP сервера из Kingsoft Cloud dashboard
+2. SSH подключение:
+   ssh root@<IP_SERVER>
+3. Введите пароль (из System Configuration)
+
+============================================================
+ШАГ 2: БАЗОВАЯ НАСТРОЙКА UBUNTU
+============================================================
+
+1. Обновить систему:
+   apt update && apt upgrade -y
+
+2. Установить базовые инструменты:
+   apt install -y curl wget git vim
+
+3. Создать пользователя для проекта (не root!):
+   adduser appuser
+   usermod -aG sudo appuser
+
+4. Перейдите в пользователя appuser:
+   su - appuser
+
+============================================================
+ШАГ 3: УСТАНОВКА NODE.JS
+============================================================
+
+1. Установить Node.js 20.x LTS:
+   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+   sudo apt install -y nodejs
+
+2. Проверить версии:
+   node -v  (должно быть v20.x.x)
+   npm -v
+
+============================================================
+ШАГ 4: СТРУКТУРА ПРОЕКТА (МАСШТАБИРУЕМАЯ)
+============================================================
+
+ВАЖНО: Структура должна поддерживать масштабирование!
+
+Создать структуру папок:
+
+/home/appuser/server/
+├── src/
+│   ├── index.js           # Entry point
+│   ├── app.js             # Fastify app setup
+│   ├── config/
+│   │   ├── index.js       # Config loader
+│   │   ├── default.js     # Default config
+│   │   └── production.js  # Production config
+│   ├── routes/
+│   │   ├── index.js       # Routes loader
+│   │   ├── files.js       # Files API
+│   │   ├── health.js      # Health check
+│   ├── controllers/
+│   │   ├── filesController.js
+│   ├── services/
+│   │   ├── storageService.js   # Storage abstraction
+│   │   ├── localStorage.js     # Local disk storage
+│   │   ├── ks3Storage.js       # KS3 storage (future)
+│   ├── middleware/
+│   │   ├── errorHandler.js
+│   │   ├── requestLogger.js
+│   ├── utils/
+│   │   ├── logger.js
+│   │   ├── pathHelper.js
+├── uploads/               # Local storage (temporary)
+├── logs/                  # Application logs
+├── tests/
+│   ├── files.test.js
+├── package.json
+├── .env                   # Environment variables
+├── .gitignore
+├── ecosystem.config.js    # PM2 config
+
+============================================================
+ПОЧЕМУ ЭТА СТРУКТУРА МАСШТАБИРУЕМАЯ:
+============================================================
+
+1. МОДУЛЬНОСТЬ
+   - routes/ → можно добавлять новые routes без изменения core
+   - controllers/ → логика отделена от routes
+   - services/ → бизнес-логика отделена от controllers
+
+2. STORAGE ABSTRACTION
+   - storageService.js → интерфейс для storage
+   - localStorage.js → сейчас (диск сервера)
+   - ks3Storage.js → потом (KS3 object storage)
+   - Переключение storage → изменить только config!
+
+3. CONFIG MANAGEMENT
+   - config/ → разные конфиги для dev/production
+   - .env → секреты (AK/SK, passwords)
+   - Можно добавлять новые config файлы
+
+4. MIDDLEWARE
+   - errorHandler → централизованная обработка ошибок
+   - requestLogger → логирование всех запросов
+   - Можно добавлять auth, subscription middleware
+
+5. HORIZONTAL SCALING READY
+   - PM2 → можно запустить несколько процессов
+   - Stateless design → можно добавить load balancer
+   - Storage abstraction → можно переключить на KS3
+
+============================================================
+ШАГ 5: СОЗДАНИЕ ПРОЕКТА
+============================================================
+
+1. Создать папки:
+   mkdir -p ~/server/src/config
+   mkdir -p ~/server/src/routes
+   mkdir -p ~/server/src/controllers
+   mkdir -p ~/server/src/services
+   mkdir -p ~/server/src/middleware
+   mkdir -p ~/server/src/utils
+   mkdir -p ~/server/uploads
+   mkdir -p ~/server/logs
+   mkdir -p ~/server/tests
+
+2. Инициализировать npm:
+   cd ~/server
+   npm init -y
+
+3. Установить зависимости:
+   npm install fastify
+   npm install @fastify/multipart   # Для file upload
+   npm install dotenv               # Для .env
+   npm install pino                 # Для logging
+   npm install pm2 -g               # Для process management
+
+============================================================
+ШАГ 6: БАЗОВЫЙ API (МИНИМАЛЬНЫЙ)
+============================================================
+
+Создать файлы:
+
+1. src/index.js:
+   - Entry point
+   - Загружает config
+   - Запускает Fastify
+
+2. src/app.js:
+   - Fastify setup
+   - Регистрация plugins
+   - Регистрация routes
+
+3. src/routes/files.js:
+   - POST /files/upload → загрузка файла
+   - GET /files/download/:filename → скачивание файла
+   - GET /files/list → список файлов
+
+4. src/services/localStorage.js:
+   - Сохранение файла на диск (uploads/)
+   - Чтение файла из диска
+   - Список файлов
+
+============================================================
+ШАГ 7: PM2 (PROCESS MANAGER)
+============================================================
+
+PM2 нужен для:
+- Автоматический restart при crash
+- Запуск нескольких процессов (scaling)
+- Логи
+- Мониторинг
+
+1. Создать ecosystem.config.js:
+   module.exports = {
+     apps: [{
+       name: 'file-server',
+       script: './src/index.js',
+       instances: 2,           // 2 процесса для scaling
+       exec_mode: 'cluster',   // Cluster mode
+       autorestart: true,
+       watch: false,
+       max_memory_restart: '1G',
+       env_production: {
+         NODE_ENV: 'production',
+         PORT: 3000
+       }
+     }]
+   }
+
+2. Запустить:
+   pm2 start ecosystem.config.js --env production
+
+3. Сохранить PM2 config:
+   pm2 save
+
+4. Автозапуск при reboot:
+   pm2 startup
+
+============================================================
+ШАГ 8: SECURITY GROUP (ПОРТ)
+============================================================
+
+В Kingsoft Cloud dashboard:
+
+1. Network → Security Group
+2. Открыть порт 3000 (или 80/443)
+3. Inbound rule:
+   - Port: 3000
+   - Source: 0.0.0.0/0 (все)
+   - Protocol: TCP
+
+============================================================
+ШАГ 9: ТЕСТИРОВАНИЕ
+============================================================
+
+1. Проверить health:
+   curl http://<IP_SERVER>:3000/health
+
+2. Загрузить файл:
+   curl -X POST -F "file=@test.txt" http://<IP_SERVER>:3000/files/upload
+
+3. Скачать файл:
+   curl http://<IP_SERVER>:3000/files/download/test.txt
+
+4. Список файлов:
+   curl http://<IP_SERVER>:3000/files/list
+
+============================================================
+ШАГ 10: ПЕРЕХОД НА KS3 (ПОСЛЕ АКТИВАЦИИ)
+============================================================
+
+Когда KS3 активируется:
+
+1. Создать src/services/ks3Storage.js
+   - Использовать ks3-sdk
+   - putObject, getObject, listObjects
+
+2. Изменить config:
+   - storage: 'ks3' вместо 'local'
+
+3. Добавить .env:
+   - KS3_AK=your_access_key
+   - KS3_SK=your_secret_key
+   - KS3_BUCKET=your_bucket_name
+   - KS3_REGION=guangzhou
+
+4. НЕ менять routes/controllers!
+   - Storage abstraction работает!
+
+============================================================
+МАСШТАБИРОВАНИЕ В БУДУЩЕМ
+============================================================
+
+1. HORIZONTAL SCALING:
+   - Добавить load balancer (SLB)
+   - Запустить несколько серверов
+   - PM2 cluster mode уже готов
+
+2. STORAGE SCALING:
+   - Переключить на KS3 (безлимитно)
+   - Добавить CDN для доставки
+
+3. DATABASE SCALING:
+   - PostgreSQL на отдельном сервере
+   - Или RDS (managed PostgreSQL)
+
+4. AUTH SCALING:
+   - Добавить middleware/auth.js
+   - JWT tokens
+   - Redis для session cache
+
+============================================================
+ВАЖНО: НЕ ДЕЛАТЬ СЕЙЧАС
+============================================================
+
+- PostgreSQL (пока localStorage)
+- Авторизация (пока открытый API)
+- Подписка (пока без лимитов)
+- KS3 (пока не активирован)
+
+============================================================
+ЧЕК-ЛИСТ ГОТОВНОСТИ
+============================================================
+
+[ ] SSH подключение работает
+[ ] Node.js установлен
+[ ] Структура папок создана
+[ ] Fastify установлен
+[ ] Базовый API работает
+[ ] PM2 установлен
+[ ] Порт открыт в Security Group
+[ ] Файлы загружаются/скачиваются
+[ ] Сервер работает после reboot
+
+============================================================
+КОНТАКТЫ И ПОДДЕРЖКА
+============================================================
+
+Kingsoft Cloud support:
+- Dashboard → 创建工单 (Create ticket)
+
+Документация:
+- KS3: https://docs.ksyun.com/documents/856
+- Fastify: https://fastify.dev
+
+============================================================
