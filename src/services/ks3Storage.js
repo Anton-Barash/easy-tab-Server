@@ -29,7 +29,7 @@ const client = new KS3(
 async function saveFile(filename, data, mimetype) {
   try {
     logger.info(`Uploading file to KS3: ${filename}`);
-    
+
     await new Promise((resolve, reject) => {
       client.object.put({
         Bucket: KS3_CONFIG.bucket,
@@ -45,7 +45,7 @@ async function saveFile(filename, data, mimetype) {
         }
       });
     });
-    
+
     return {
       filename,
       bucket: KS3_CONFIG.bucket,

@@ -1,5 +1,6 @@
 const healthRoutes = require('./health');
 const filesRoutes = require('./files');
+const databaseRoutes = require('./database');
 
 async function registerRoutes(fastify) {
   // Health check
@@ -7,6 +8,9 @@ async function registerRoutes(fastify) {
 
   // Files API
   fastify.register(filesRoutes, { prefix: '/files' });
+
+  // Database API
+  fastify.register(databaseRoutes, { prefix: '/database' });
 }
 
 module.exports = registerRoutes;
