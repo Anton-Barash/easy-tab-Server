@@ -1,4 +1,5 @@
 const fastify = require('fastify');
+const cors = require('@fastify/cors');
 const multipart = require('@fastify/multipart');
 const config = require('./config');
 const errorHandler = require('./middleware/errorHandler');
@@ -15,6 +16,13 @@ function buildApp() {
   requestLogger(app);
 
   // Регистрация plugins
+  app.register(cors, {
+    origin: true, // разрешить все источники (для разработки)
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+  });
+
   app.register(multipart, {
     limits: {
       fileSize: config.maxFileSize,
