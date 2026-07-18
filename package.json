@@ -17,8 +17,14 @@
   "author": "",
   "license": "ISC",
   "description": "",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.0",
     "@fastify/multipart": "^10.0.0",
+    "@fastify/rate-limit": "^11.1.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5",
     "ks3": "^1.0.0",

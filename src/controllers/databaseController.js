@@ -1,39 +1,45 @@
-// Database Controller - handles database-related requests
+// ============================================================
+// Database Controller — обработчики запросов администрирования БД
+//
+// БЕЗОПАСНОСТЬ:
+// - Не возвращаем конфигурацию подключения (host/port/user) наружу (H-07).
+// - Внутренние ошибки фильтруем — не раскрываем схему БД (M-27).
+// ============================================================
 
 const databaseService = require('../services/databaseService');
 
 /**
- * Check database connection status
+ * Проверка статуса подключения к БД.
+ * Возвращает только connected: true/false, без деталей конфигурации.
  */
 async function checkConnection(request, reply) {
   try {
     const result = await databaseService.checkConnection();
-    
+
     if (result.connected) {
       return reply.send({
         success: true,
         message: 'Database connection successful',
         timestamp: result.timestamp,
-        config: result.config,
+        // НЕ возвращаем result.config — это раскрывает host/user/port
       });
     } else {
       return reply.status(503).send({
         success: false,
         message: 'Database connection failed',
-        error: result.error,
       });
     }
   } catch (error) {
     request.log.error(error);
     return reply.status(500).send({
       success: false,
-      error: error.message,
+      error: 'Database check failed',
     });
   }
 }
 
 /**
- * Get database version
+ * Получить версию PostgreSQL.
  */
 async function getVersion(request, reply) {
   try {
@@ -46,13 +52,13 @@ async function getVersion(request, reply) {
     request.log.error(error);
     return reply.status(500).send({
       success: false,
-      error: error.message,
+      error: 'Failed to get database version',
     });
   }
 }
 
 /**
- * List all tables
+ * Список всех таблиц (для администрирования).
  */
 async function listTables(request, reply) {
   try {
@@ -66,7 +72,7 @@ async function listTables(request, reply) {
     request.log.error(error);
     return reply.status(500).send({
       success: false,
-      error: error.message,
+      error: 'Failed to list tables',
     });
   }
 }

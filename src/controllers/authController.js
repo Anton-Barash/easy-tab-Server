@@ -27,6 +27,14 @@ async function register(request, reply) {
       });
     }
 
+    // P3-49: Верхний лимит пароля — защита от DoS через PBKDF2 на гигантском пароле.
+    if (password.length > 256) {
+      return reply.status(400).send({
+        success: false,
+        error: 'Password must be at most 256 characters',
+      });
+    }
+
     if (username.length < 3) {
       return reply.status(400).send({
         success: false,

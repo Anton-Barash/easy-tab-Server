@@ -52,6 +52,66 @@ function sanitizeFilename(filename) {
 }
 
 /**
+ * Санитизирует относительный путь файла внутри папки отчёта.
+ *
+ * В отличие от sanitizeFilename (который берёт только basename),
+ * эта функция сохраняет структуру подкаталогов (например "photos/f1_1_001.jpg"),
+ * но жёстко блокирует path traversal:
+ *   - запрещает ".." (любая компонента)
+ *   - запрещает ведущий "/" (абсолютный путь)
+ *   - запрещает ведущие "\" (Windows-абсолютный путь)
+ *   - запрещает NUL и управляющие символы
+ *   - запрещает компоненты, состоящие только из точек/пробелов
+ *
+ * @param {string} relativePath - относительный путь (например "photos/f1_1_001.jpg")
+ * @returns {string|null} безопасный путь или null, если путь невалиден
+ */
+function sanitizeRelativePath(relativePath) {
+  if (!relativePath || typeof relativePath !== 'string') {
+    return null;
+  }
+
+  // Запрет NUL и управляющих символов
+  if (/[\x00-\x1f\x7f]/.test(relativePath)) {
+    return null;
+  }
+
+  // Нормализуем обратные слеши в прямые (Windows → Unix)
+  let normalized = relativePath.replace(/\\/g, '/');
+
+  // Запрет ведущего слеша (абсолютный путь)
+  if (normalized.startsWith('/')) {
+    return null;
+  }
+
+  // Разбиваем на компоненты и проверяем каждую
+  const parts = normalized.split('/');
+  const safeParts = [];
+  for (const part of parts) {
+    // Пустая компонента (двойной слеш) — пропускаем
+    if (part === '') continue;
+
+    // Запрет ".." и компонент, состоящих только из точек/пробелов
+    if (/^(\.\s*)+$/.test(part)) {
+      return null;
+    }
+
+    // Компонента не должна содержать опасных символов (оставляем буквы/цифры/._-/)
+    const cleaned = part.replace(/[^\p{L}\p{N}._-]/gu, '_');
+    if (!cleaned) {
+      return null;
+    }
+    safeParts.push(cleaned);
+  }
+
+  if (safeParts.length === 0) {
+    return null;
+  }
+
+  return safeParts.join('/');
+}
+
+/**
  * Карта расширений → MIME-типов.
  * Используется, если KS3-клиент не может определить тип автоматически.
  * Включает основные типы, нужные приложению.
@@ -122,12 +182,20 @@ function getMimeType(filename) {
  * Inline = true для HTML-файлов отчёта: они должны открываться
  * как страница в браузере по подписанной ссылке.
  *
+ * БЕЗОПАСНОСТЬ (H-24): image/svg+xml исключён из inline —
+ * SVG может содержать <script> и привести к stored XSS
+ * в домене бакета. SVG принудительно скачивается.
+ *
  * @param {string} filename - имя файла
  * @param {string} [mimeType] - MIME-тип (если известен)
  * @returns {boolean} true, если файл нужно открыть в браузере
  */
 function isInlineFile(filename, mimeType) {
   const mime = mimeType || getMimeType(filename);
+  // SVG НЕ открываем inline (XSS-риск через <script>)
+  if (mime === 'image/svg+xml') {
+    return false;
+  }
   // Все текстовые и HTML-типы открываем в браузере
   return mime.startsWith('text/html') || mime.startsWith('image/') || mime.startsWith('video/');
 }
@@ -153,6 +221,7 @@ function buildStorageKey(uuid, filename) {
 module.exports = {
   generateUuid,
   sanitizeFilename,
+  sanitizeRelativePath,
   getMimeType,
   isInlineFile,
   buildStorageKey,

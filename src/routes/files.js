@@ -1,26 +1,26 @@
 // ============================================================
 // Маршруты для работы с файлами (/files)
 //
-// Все эндпоинты (кроме KS3-тестов) требуют аутентификации
-// (middleware requireAuth).
+// Все эндпоинты требуют аутентификации (middleware requireAuth).
 //
 // Эндпоинты по спецификации files.txt:
 //   POST   /files/upload              — загрузить файл
 //   GET    /files                     — список файлов пользователя
+//   GET    /files/by-report/:reportId — список файлов отчёта
+//   GET    /files/by-report/:reportId/urls — подписанные URL файлов отчёта
 //   GET    /files/:id                 — метаданные файла
 //   GET    /files/:id/download        — подписанный URL для скачивания
 //   POST   /files/:id/permissions     — выдать право
 //   DELETE /files/:id/permissions/:uid — отозвать право
 //   DELETE /files/:id                 — удалить файл
 //
-// Тестовые эндпоинты (без аутентификации):
-//   GET    /files/ks3/check           — проверить доступность бакета
-//   POST   /files/ks3/presigned-url   — тестовая генерация URL
+// БЕЗОПАСНОСТЬ: тестовые эндпоинты /files/ks3/* удалены
+// (C-05, H-06, H-38) — они позволяли любому генерировать
+// подписанные URL для чужих объектов и раскрывали bucket/region.
 // ============================================================
 
 const { requireAuth } = require('../middleware/authMiddleware');
 const filesController = require('../controllers/filesController');
-const ks3Storage = require('../services/ks3Storage');
 
 async function filesRoutes(fastify) {
   // --------------------------------------------------------
@@ -28,7 +28,7 @@ async function filesRoutes(fastify) {
   // --------------------------------------------------------
 
   // Загрузка файла (multipart/form-data)
-  // Body: file + relativePath (опционально) + parentId (опционально)
+  // Body: file + relativePath (опционально) + reportId (опционально)
   fastify.post('/upload', { preHandler: requireAuth }, filesController.uploadFile);
 
   // Список всех файлов пользователя (владелец + выданные права)
@@ -54,7 +54,7 @@ async function filesRoutes(fastify) {
   fastify.get('/:id', { preHandler: requireAuth }, filesController.getFile);
 
   // Подписанный URL для скачивания/просмотра файла
-  // Query: ?expires=3600 (время жизни URL в секундах)
+  // Query: ?expires=3600 (время жизни URL в секундах, клампится 60..3600)
   fastify.get(
     '/:id/download',
     { preHandler: requireAuth },
@@ -79,47 +79,6 @@ async function filesRoutes(fastify) {
 
   // Удалить файл (только владелец)
   fastify.delete('/:id', { preHandler: requireAuth }, filesController.deleteFile);
-
-  // --------------------------------------------------------
-  // Тестовые эндпоинты для KS3 (без аутентификации)
-  // --------------------------------------------------------
-
-  // Проверка доступности бакета KS3
-  fastify.get('/ks3/check', async (request, reply) => {
-    try {
-      const isAccessible = await ks3Storage.checkBucket();
-      return reply.send({
-        success: isAccessible,
-        bucket: ks3Storage.KS3_CONFIG.bucket,
-        region: ks3Storage.KS3_CONFIG.region,
-        message: isAccessible
-          ? 'KS3 bucket is accessible'
-          : 'KS3 bucket not accessible',
-      });
-    } catch (error) {
-      return reply.status(500).send({ error: error.message });
-    }
-  });
-
-  // Тестовая генерация подписанного URL
-  // Body: { key: string, expires?: number }
-  fastify.post('/ks3/presigned-url', async (request, reply) => {
-    try {
-      const { key, expires } = request.body;
-      if (!key) {
-        return reply.status(400).send({ error: 'Key is required' });
-      }
-      const url = await ks3Storage.getPresignedUrl(key, expires || 3600);
-      return reply.send({
-        success: true,
-        url,
-        key,
-        expires: expires || 3600,
-      });
-    } catch (error) {
-      return reply.status(500).send({ error: error.message });
-    }
-  });
 }
 
 module.exports = filesRoutes;

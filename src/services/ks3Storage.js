@@ -6,17 +6,40 @@
 //
 // Все файлы хранятся в приватном бакете.
 // Доступ — только через подписанные URL (presigned URLs).
+//
+// БЕЗОПАСНОСТЬ: ключи KS3 берутся ТОЛЬКО из env-переменных.
+// Хардкод отсутствует — в production сервер упадёт при запуске
+// без KS3_ACCESS_KEY/KS3_SECRET_KEY.
 // ============================================================
 
 const KS3 = require('ks3');
 const logger = require('../utils/logger');
 
-// Конфигурация KS3 — значения можно переопределить через .env
+// ------------------------------------------------------------
+// Конфигурация KS3 — только из env, без хардкода.
+// Если переменные не заданы — выбрасываем ошибку сразу
+// (fail-fast), чтобы не запускать сервер без секретов.
+// ------------------------------------------------------------
+
+function _requireEnv(name) {
+  const value = process.env[name];
+  if (!value || value.trim() === '') {
+    throw new Error(
+      `KS3: обязательная переменная окружения ${name} не задана. ` +
+      `Установите её в .env (dev) или ecosystem.config.js (production).`
+    );
+  }
+  return value.trim();
+}
+
+// P0-1: bucket и region теперь обязательные — без них приложение не должно
+// стартовать, т.к. fallback-значения ('ew-ks3', 'GUANGZHOU') могут указывать
+// на чужой/несуществующий бакет и приводить к утечке данных.
 const KS3_CONFIG = {
-  accessKeyId: process.env.KS3_ACCESS_KEY || 'AKLTVcEfi57Tqah5YLaRqHex',
-  accessKeySecret: process.env.KS3_SECRET_KEY || 'OId4i10qT4Zpne6jiiU5p7ZYcZV32VfnDZ9LUR8d',
-  bucket: process.env.KS3_BUCKET || 'ew-ks3',
-  region: process.env.KS3_REGION || 'GUANGZHOU',
+  accessKeyId: _requireEnv('KS3_ACCESS_KEY'),
+  accessKeySecret: _requireEnv('KS3_SECRET_KEY'),
+  bucket: _requireEnv('KS3_BUCKET'),
+  region: _requireEnv('KS3_REGION'),
 };
 
 // Создаём KS3-клиент один раз при загрузке модуля
@@ -26,6 +49,28 @@ const client = new KS3(
   KS3_CONFIG.bucket,
   KS3_CONFIG.region
 );
+
+// ------------------------------------------------------------
+// Геттеры для конфигурации (вместо экспорта объекта с ключами).
+// Возвращают только безопасные поля (bucket, region) —
+// ключи наружу не отдаются.
+// ------------------------------------------------------------
+
+/**
+ * Получить имя бакета KS3.
+ * @returns {string}
+ */
+function getBucket() {
+  return KS3_CONFIG.bucket;
+}
+
+/**
+ * Получить регион KS3.
+ * @returns {string}
+ */
+function getRegion() {
+  return KS3_CONFIG.region;
+}
 
 /**
  * Загрузить файл в KS3.
@@ -38,7 +83,9 @@ const client = new KS3(
  */
 async function saveFile(key, body, mimeType = 'application/octet-stream') {
   try {
-    logger.info(`KS3 upload: ${key} (${body.length} bytes, ${mimeType})`);
+    // P3-49: storage_key (path в бакете) не логируем на info — только на debug.
+    logger.info(`KS3 upload: ${body.length} bytes, ${mimeType}`);
+    logger.debug(`KS3 upload key: ${key}`);
 
     await new Promise((resolve, reject) => {
       client.object.put(
@@ -55,7 +102,7 @@ async function saveFile(key, body, mimeType = 'application/octet-stream') {
             logger.error(`KS3 upload error: ${err}`);
             reject(err);
           } else {
-            logger.info(`KS3 upload success: ${key}`);
+            logger.debug(`KS3 upload success: ${key}`);
             resolve(data);
           }
         }
@@ -84,7 +131,9 @@ async function saveFile(key, body, mimeType = 'application/octet-stream') {
  */
 async function getFile(key) {
   try {
-    logger.info(`KS3 download: ${key}`);
+    // P3-49: storage_key не логируем на info — только на debug.
+    logger.info('KS3 download');
+    logger.debug(`KS3 download key: ${key}`);
 
     const data = await new Promise((resolve, reject) => {
       client.object.get(
@@ -126,7 +175,9 @@ async function getFile(key) {
  */
 async function getPresignedUrl(key, expires = 3600) {
   try {
-    logger.info(`KS3 presigned URL: ${key} (expires in ${expires}s)`);
+    // P3-49: storage_key не логируем на info — только на debug.
+    logger.info(`KS3 presigned URL (expires in ${expires}s)`);
+    logger.debug(`KS3 presigned URL key: ${key}`);
 
     const url = await new Promise((resolve, reject) => {
       client.object.generatePresignedUrl(
@@ -201,7 +252,9 @@ async function listFiles() {
  */
 async function deleteFile(key) {
   try {
-    logger.info(`KS3 delete: ${key}`);
+    // P3-49: storage_key не логируем на info — только на debug.
+    logger.info('KS3 delete');
+    logger.debug(`KS3 delete key: ${key}`);
 
     await new Promise((resolve, reject) => {
       client.object.delete(
@@ -265,9 +318,9 @@ module.exports = {
   saveFile,
   getFile,
   getPresignedUrl,
-  listFiles,
   deleteFile,
   checkBucket,
-  client,
-  KS3_CONFIG,
+  // Геттеры вместо экспорта client/KS3_CONFIG (не раскрываем секреты)
+  getBucket,
+  getRegion,
 };

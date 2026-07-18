@@ -1,22 +1,24 @@
 // Auth Service - user registration, login, token verification
 
 const crypto = require('crypto');
+const { promisify } = require('util');
 const logger = require('../utils/logger');
 const { query } = require('./databaseService');
 const authConfig = require('../config/auth');
 
+// TODO-32: асинхронный PBKDF2 — не блокирует event loop при хэшировании/проверке.
+const pbkdf2Async = promisify(crypto.pbkdf2);
+
 /**
  * Hash a password using PBKDF2 (Node.js built-in, no external deps)
  * @param {string} password
- * @returns {string} - format: "salt:iterations:keylen:hash"
+ * @returns {Promise<string>} - format: "salt:iterations:keylen:hash"
  */
-function hashPassword(password) {
+async function hashPassword(password) {
   const salt = crypto.randomBytes(32).toString('hex');
   const iterations = 100000;
   const keylen = 64;
-  const hash = crypto
-    .pbkdf2Sync(password, salt, iterations, keylen, 'sha512')
-    .toString('hex');
+  const hash = (await pbkdf2Async(password, salt, iterations, keylen, 'sha512')).toString('hex');
   return `${salt}:${iterations}:${keylen}:${hash}`;
 }
 
@@ -24,14 +26,12 @@ function hashPassword(password) {
  * Verify a password against stored hash
  * @param {string} password
  * @param {string} storedHash - format: "salt:iterations:keylen:hash"
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-function verifyPassword(password, storedHash) {
+async function verifyPassword(password, storedHash) {
   try {
     const [salt, iterations, keylen, hash] = storedHash.split(':');
-    const testHash = crypto
-      .pbkdf2Sync(password, salt, parseInt(iterations), parseInt(keylen), 'sha512')
-      .toString('hex');
+    const testHash = (await pbkdf2Async(password, salt, parseInt(iterations), parseInt(keylen), 'sha512')).toString('hex');
     return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(testHash, 'hex'));
   } catch (error) {
     logger.error(`Password verification error: ${error.message}`);
@@ -49,7 +49,7 @@ function generateToken(payload) {
   const body = Buffer.from(JSON.stringify({
     ...payload,
     iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60, // 7 days
+    exp: Math.floor(Date.now() / 1000) + authConfig.tokenExpirySeconds,
   })).toString('base64url');
 
   const signature = crypto
@@ -70,6 +70,14 @@ function verifyToken(token) {
     const [header, body, signature] = token.split('.');
     if (!header || !body || !signature) return null;
 
+    // P2-42: Проверка header — alg MUST be HS256, typ MUST be JWT.
+    // Защита от algorithm confusion attack (alg=none или RS256 с public key).
+    const headerObj = JSON.parse(Buffer.from(header, 'base64url').toString());
+    if (headerObj.alg !== 'HS256' || headerObj.typ !== 'JWT') {
+      logger.warn(`Token rejected: invalid header alg=${headerObj.alg} typ=${headerObj.typ}`);
+      return null;
+    }
+
     const expectedSignature = crypto
       .createHmac('sha256', authConfig.jwtSecret)
       .update(`${header}.${body}`)
@@ -84,7 +92,13 @@ function verifyToken(token) {
 
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
 
-    if (payload.exp && Math.floor(Date.now() / 1000) > payload.exp) {
+    // P2-42: Обязательные поля payload.
+    if (!payload.userId || !payload.exp || !payload.iat) {
+      logger.warn('Token rejected: missing required claims');
+      return null;
+    }
+
+    if (Math.floor(Date.now() / 1000) > payload.exp) {
       logger.warn('Token expired');
       return null;
     }
@@ -105,7 +119,7 @@ function verifyToken(token) {
  * @returns {Promise<object>} - user info and token
  */
 async function register(username, name, email, password) {
-  // Check if username or email already exists
+  // Check if username or email already exists (fast-path, user-friendly error)
   const existing = await query(
     'SELECT id FROM users WHERE username = $1 OR email = $2',
     [username, email]
@@ -117,14 +131,26 @@ async function register(username, name, email, password) {
     throw error;
   }
 
-  const passwordHash = hashPassword(password);
+  const passwordHash = await hashPassword(password);
 
-  const result = await query(
-    `INSERT INTO users (username, name, email, password_hash)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, username, name, email, created_at`,
-    [username, name, email, passwordHash]
-  );
+  let result;
+  try {
+    result = await query(
+      `INSERT INTO users (username, name, email, password_hash)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, username, name, email, created_at`,
+      [username, name, email, passwordHash]
+    );
+  } catch (err) {
+    // Task 20: race condition — другой запрос успел вставить между SELECT и INSERT.
+    // PostgreSQL unique_violation — code 23505.
+    if (err.code === '23505') {
+      const error = new Error('Username or email already exists');
+      error.code = 'USER_EXISTS';
+      throw error;
+    }
+    throw err;
+  }
 
   const user = result.rows[0];
   const token = generateToken({ userId: user.id, username: user.username });
@@ -133,6 +159,19 @@ async function register(username, name, email, password) {
 
   return { user, token };
 }
+
+// Task 21: фиктивный хеш для выравнивания timing при несуществующем пользователе.
+// Тот же формат и стоимость PBKDF2, что и в hashPassword — атакующий не отличит
+// «нет пользователя» от «неверный пароль» по времени ответа.
+const DUMMY_HASH = (() => {
+  const salt = crypto.randomBytes(32).toString('hex');
+  const iterations = 100000;
+  const keylen = 64;
+  const hash = crypto
+    .pbkdf2Sync('dummy', salt, iterations, keylen, 'sha512')
+    .toString('hex');
+  return `${salt}:${iterations}:${keylen}:${hash}`;
+})();
 
 /**
  * Login user
@@ -147,6 +186,9 @@ async function login(usernameOrEmail, password) {
   );
 
   if (result.rows.length === 0) {
+    // Task 21: выполняем verifyPassword против фиктивного хеша, чтобы
+    // выровнять время ответа (защита от user enumeration по timing).
+    await verifyPassword(password, DUMMY_HASH);
     const error = new Error('Invalid credentials');
     error.code = 'INVALID_CREDENTIALS';
     throw error;
@@ -154,7 +196,7 @@ async function login(usernameOrEmail, password) {
 
   const user = result.rows[0];
 
-  if (!verifyPassword(password, user.password_hash)) {
+  if (!(await verifyPassword(password, user.password_hash))) {
     const error = new Error('Invalid credentials');
     error.code = 'INVALID_CREDENTIALS';
     throw error;

@@ -9,7 +9,9 @@ const authService = require('../services/authService');
  */
 function extractUser(request) {
   const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // P3-60: RFC 7235 — схема авторизации case-insensitive.
+  // toLowerCase() гарантирует, что 'bearer' и 'Bearer' обрабатываются одинаково.
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
     return null;
   }
 
@@ -31,18 +33,7 @@ async function requireAuth(request, reply) {
   request.user = payload;
 }
 
-/**
- * Middleware: optional authentication (doesn't fail if no token)
- */
-async function optionalAuth(request, reply) {
-  const payload = extractUser(request);
-  if (payload) {
-    request.user = payload;
-  }
-}
-
 module.exports = {
   extractUser,
   requireAuth,
-  optionalAuth,
 };

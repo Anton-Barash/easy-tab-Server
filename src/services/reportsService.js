@@ -84,15 +84,27 @@ async function saveReport({ userId, title, reportData, reportId }) {
   // Загружаем JSON в KS3
   await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
-  // Создаём запись в БД (с ks3_folder)
-  const result = await db.query(
-    `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level)
-     VALUES ($1, $2, $3, $4, 'specific')
-     RETURNING id, title, created_at`,
-    [title, fileKey, ks3Folder, userId]
-  );
+  // Создаём запись в БД (с ks3_folder).
+  // C-34: если INSERT упадёт — удаляем осиротевший файл из KS3 (компенсация).
+  let row;
+  try {
+    const result = await db.query(
+      `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level)
+       VALUES ($1, $2, $3, $4, 'specific')
+       RETURNING id, title, created_at`,
+      [title, fileKey, ks3Folder, userId]
+    );
+    row = result.rows[0];
+  } catch (insertErr) {
+    logger.error(`saveReport: DB insert failed, compensating KS3 delete for ${fileKey}: ${insertErr.message}`);
+    try {
+      await ks3.deleteFile(fileKey);
+    } catch (cleanupErr) {
+      logger.error(`saveReport: KS3 compensation delete failed for ${fileKey}: ${cleanupErr.message}`);
+    }
+    throw insertErr;
+  }
 
-  const row = result.rows[0];
   logger.info(`saveReport: created report ${row.id} for user ${userId}, folder=${ks3Folder}`);
 
   return {
@@ -172,9 +184,9 @@ async function getReport(reportId, userId) {
 /**
  * Удалить отчёт.
  *
- * Удаляет:
- *   1. Запись из БД (CASCADE удалит связанные files и file_permissions)
- *   2. Все файлы отчёта из KS3 (папка reports/{UUID}/)
+ * C-34: Сначала удаляем запись из БД (транзакционно), потом — файлы из KS3.
+ * Если KS3-удаление упадёт, останутся «осиротевшие» файлы (логируем warning,
+ * это лучше, чем осиротевшая запись в БД, указывающая на удалённые файлы).
  *
  * Только владелец может удалить.
  *
@@ -183,7 +195,8 @@ async function getReport(reportId, userId) {
  * @returns {Promise<boolean>}
  */
 async function deleteReport(reportId, userId) {
-  // Проверяем владение
+  // Проверяем владение и сразу получаем список файлов для последующей
+  // очистки KS3 (до удаления из БД, пока CASCADE не сработал).
   const meta = await db.query(
     'SELECT * FROM reports WHERE id = $1 AND creator_user_id = $2',
     [reportId, userId]
@@ -204,30 +217,32 @@ async function deleteReport(reportId, userId) {
     'SELECT storage_key FROM files WHERE report_id = $1',
     [reportId]
   );
+  const ks3Keys = filesResult.rows.map((f) => f.storage_key);
+  // JSON отчёта тоже нужно удалить (если не был в списке files)
+  if (fileKey && !ks3Keys.includes(fileKey)) {
+    ks3Keys.push(fileKey);
+  }
 
-  // 2. Удаляем каждый файл из KS3
-  for (const file of filesResult.rows) {
+  // 2. Удаляем запись из БД (CASCADE удалит files и file_permissions).
+  //    C-34: БД-удаление выполняем ДО KS3-удаления — если БД упадёт,
+  //    файлы останутся на месте (нет data loss).
+  await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
+
+  // 3. Удаляем файлы из KS3 (best-effort). Осиротевшие файлы при неудаче
+  //    логируются, но не ломают операцию — БД уже консистентна.
+  let removedCount = 0;
+  for (const key of ks3Keys) {
     try {
-      await ks3.deleteFile(file.storage_key);
+      await ks3.deleteFile(key);
+      removedCount++;
     } catch (err) {
-      logger.warn(`deleteReport: failed to delete KS3 file ${file.storage_key}: ${err.message}`);
-      // Продолжаем, даже если не удалось удалить какой-то файл
+      logger.warn(`deleteReport: failed to delete KS3 file ${key}: ${err.message}`);
     }
   }
 
-  // 3. Удаляем JSON отчёта из KS3 (если не был в списке files)
-  try {
-    await ks3.deleteFile(fileKey);
-  } catch (err) {
-    logger.warn(`deleteReport: failed to delete report JSON ${fileKey}: ${err.message}`);
-  }
-
-  // 4. Удаляем запись из БД (CASCADE удалит files и file_permissions)
-  await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
-
   logger.info(
     `deleteReport: deleted report ${reportId} by user ${userId}, ` +
-    `${filesResult.rows.length} files removed from KS3`
+    `${removedCount}/${ks3Keys.length} files removed from KS3`
   );
   return true;
 }

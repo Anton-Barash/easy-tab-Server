@@ -2,3 +2,12 @@ node_modules/
 uploads/
 logs/
 .env
+
+# Временные log-файлы и артефакты установки
+*.log
+install_*.log
+install_*.cmd
+npm_*.log
+
+# Sample-директория (не отслеживать)
+sample/

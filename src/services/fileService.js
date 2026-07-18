@@ -17,11 +17,31 @@ const ks3 = require('./ks3Storage');
 const {
   generateUuid,
   sanitizeFilename,
+  sanitizeRelativePath,
   getMimeType,
   isInlineFile,
   buildStorageKey,
 } = require('../utils/fileUtils');
 const logger = require('../utils/logger');
+
+// ------------------------------------------------------------
+// Вспомогательные функции
+// ------------------------------------------------------------
+
+/**
+ * Проверить, существует ли пользователь с указанным ID.
+ * P3-49: используется в grantPermission/revokePermission, чтобы не передавать
+ * права несуществующим пользователям (иначе ON CONFLICT создаст запись,
+ * а FK user_id...REFERENCES users(id) сработает только при INSERT,
+ * оставляя ревоку в неопределённом состоянии).
+ *
+ * @param {number} userId - ID пользователя
+ * @returns {Promise<boolean>}
+ */
+async function userExists(userId) {
+  const result = await db.query('SELECT 1 FROM users WHERE id = $1', [userId]);
+  return result.rows.length > 0;
+}
 
 // ------------------------------------------------------------
 // Загрузка файла (files.txt п.1)
@@ -31,13 +51,20 @@ const logger = require('../utils/logger');
  * Загрузить файл в KS3 и создать запись в БД.
  *
  * Шаги:
- *   1. Генерируем UUID
- *   2. Очищаем имя файла
- *   3. Формируем ключ: files/{UUID}/{name} или reports/{reportUuid}/{relativePath}
- *   4. Определяем MIME-тип
- *   5. Загружаем в KS3
- *   6. Создаём запись в таблице files (с привязкой к отчёту, если есть)
- *   7. Добавляем право owner для текущего пользователя
+ *   1. Если есть reportId — загружаем ks3_folder из БД (с проверкой владения),
+ *      sanitizedRelativePath валидируется сервером.
+ *   2. Генерируем UUID
+ *   3. Очищаем имя файла
+ *   4. Формируем ключ: files/{UUID}/{name} или reports/{reportUuid}/{relativePath}
+ *   5. Определяем MIME-тип
+ *   6. Загружаем в KS3
+ *   7. Создаём запись в таблице files (с привязкой к отчёту, если есть)
+ *   8. Добавляем право owner для текущего пользователя
+ *
+ * БЕЗОПАСНОСТЬ (H-10):
+ *   - ks3Folder больше НЕ принимается от клиента — вычисляется из БД по reportId.
+ *   - relativePath проходит жёсткую валидацию (sanitizeRelativePath):
+ *     запрет "..", ведущих "/", NUL, управляющих символов.
  *
  * @param {object} params
  * @param {number} params.userId - ID пользователя (из JWT)
@@ -46,10 +73,40 @@ const logger = require('../utils/logger');
  * @param {string} [params.relativePath] - относительный путь в папке отчёта
  * @param {string|null} [params.parentId] - UUID папки-родителя
  * @param {number|null} [params.reportId] - ID отчёта (для привязки файла к отчёту)
- * @param {string|null} [params.ks3Folder] - папка отчёта в KS3 (например: "reports/uuid/")
  * @returns {Promise<object>} запись о файле
  */
-async function uploadFile({ userId, originalName, body, relativePath, parentId, reportId, ks3Folder }) {
+async function uploadFile({ userId, originalName, body, relativePath, parentId, reportId }) {
+  // 0. Если есть reportId — проверяем владение и загружаем ks3_folder из БД
+  let ks3Folder = null;
+  let safeRelativePath = null;
+
+  if (reportId) {
+    const reportResult = await db.query(
+      'SELECT ks3_folder FROM reports WHERE id = $1 AND creator_user_id = $2',
+      [reportId, userId]
+    );
+
+    if (reportResult.rows.length === 0) {
+      const err = new Error('Report not found or access denied');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    ks3Folder = reportResult.rows[0].ks3_folder || null;
+
+    // Если у отчёта нет ks3_folder (старый отчёт) — нельзя привязывать файлы
+    // к конкретному пути, используем стандартный ключ files/{uuid}/
+    if (ks3Folder) {
+      // Валидируем relativePath сервером — НЕ доверяем клиенту
+      safeRelativePath = relativePath ? sanitizeRelativePath(relativePath) : null;
+      if (relativePath && !safeRelativePath) {
+        const err = new Error('Invalid relativePath: path traversal detected');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+  }
+
   // 1. UUID файла
   const uuid = generateUuid();
 
@@ -60,18 +117,25 @@ async function uploadFile({ userId, originalName, body, relativePath, parentId, 
   //    - Если есть ks3Folder (файл отчёта): reports/{reportUuid}/{relativePath}
   //    - Иначе: files/{UUID}/{name}
   let storageKey;
-  if (ks3Folder && relativePath) {
-    // Файл внутри папки отчёта
-    storageKey = `${ks3Folder}${relativePath}`;
+  let relPath;
+  if (ks3Folder && safeRelativePath) {
+    // Файл внутри папки отчёта с валидным относительным путём
+    storageKey = `${ks3Folder}${safeRelativePath}`;
+    relPath = safeRelativePath;
+  } else if (ks3Folder && !relativePath) {
+    // Файл в корне папки отчёта — используем sanitized filename
+    storageKey = `${ks3Folder}${safeName}`;
+    relPath = safeName;
   } else {
-    // Самостоятельный файл
+    // Самостоятельный файл (без отчёта или старый отчёт без ks3_folder)
     storageKey = buildStorageKey(uuid, originalName);
+    relPath = safeName;
   }
 
   // 4. MIME-тип по расширению
   const mimeType = getMimeType(originalName);
 
-  // 5. Нужно ли открывать в браузере (inline) — для HTML/фото/видео
+  // 5. Нужно ли открывать в браузере (inline) — для HTML/фото/видео (SVG исключён — H-24)
   const inline = isInlineFile(originalName, mimeType);
 
   // 6. Загружаем в KS3
@@ -80,39 +144,54 @@ async function uploadFile({ userId, originalName, body, relativePath, parentId, 
   );
   await ks3.saveFile(storageKey, body, mimeType);
 
-  // 7. relative_path: если не передан, используем очищенное имя
-  const relPath = relativePath || safeName;
+  // 7. Создаём запись в таблице files + owner-право в одной транзакции (P0-51).
+  // Оба INSERT должны быть атомарны — иначе файл в KS3 без прав или наоборот.
+  let fileRecord;
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const result = await dbClient.query(
+      `INSERT INTO files
+         (id, owner_id, storage_key, original_name, size, mime_type, relative_path, parent_id, is_inline, report_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [
+        uuid,
+        userId,
+        storageKey,
+        originalName,
+        body.length,
+        mimeType,
+        relPath,
+        parentId || null,
+        inline,
+        reportId || null,
+      ]
+    );
+    fileRecord = result.rows[0];
 
-  // 8. Создаём запись в таблице files (с привязкой к отчёту, если есть)
-  const result = await db.query(
-    `INSERT INTO files
-       (id, owner_id, storage_key, original_name, size, mime_type, relative_path, parent_id, is_inline, report_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-     RETURNING *`,
-    [
-      uuid,
-      userId,
-      storageKey,
-      originalName,
-      body.length,
-      mimeType,
-      relPath,
-      parentId || null,
-      inline,
-      reportId || null,
-    ]
-  );
-  const fileRecord = result.rows[0];
+    // 8. Добавляем право owner для загрузившего пользователя
+    await dbClient.query(
+      `INSERT INTO file_permissions (file_id, user_id, permission, granted_by)
+       VALUES ($1, $2, 'owner', $2)`,
+      [uuid, userId]
+    );
 
-  // 9. Добавляем право owner для загрузившего пользователя
-  await db.query(
-    `INSERT INTO file_permissions (file_id, user_id, permission, granted_by)
-     VALUES ($1, $2, 'owner', $2)`,
-    [uuid, userId]
-  );
-
-  logger.info(`uploadFile: created file ${uuid} for user ${userId}, reportId=${reportId || 'null'}`);
-  return fileRecord;
+    await dbClient.query('COMMIT');
+    logger.info(`uploadFile: created file ${uuid} for user ${userId}, reportId=${reportId || 'null'}`);
+  } catch (dbErr) {
+    await dbClient.query('ROLLBACK');
+    dbClient.release();
+    // Компенсация: удаляем объект из KS3, если БД-операция упала (H-17 — orphan-объект)
+    try {
+      await ks3.deleteFile(storageKey);
+      logger.warn(`uploadFile: DB insert failed, KS3 object ${storageKey} deleted (compensation)`);
+    } catch (ks3Err) {
+      logger.error(`uploadFile: KS3 compensation delete failed for ${storageKey}: ${ks3Err.message}`);
+    }
+    throw dbErr;
+  }
+  dbClient.release();
 }
 
 // ------------------------------------------------------------
@@ -310,6 +389,14 @@ async function grantPermission({ fileId, fromUserId, toUserId, permission }) {
     throw err;
   }
 
+  // P3-49: проверяем существование целевого пользователя — иначе выдаём
+  // осмысленный 404 вместо FK-ошибки базы данных.
+  if (!(await userExists(toUserId))) {
+    const err = new Error('Target user not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
   // Проверяем, может ли текущий пользователь раздавать права
   const canShare =
     (await hasPermission(fileId, fromUserId, 'share')) ||
@@ -351,6 +438,14 @@ async function grantPermission({ fileId, fromUserId, toUserId, permission }) {
  * @returns {Promise<number>} количество удалённых записей
  */
 async function revokePermission({ fileId, fromUserId, targetUserId, permission }) {
+  // P3-49: проверяем существование целевого пользователя — иначе выдаём
+  // осмысленный 404 вместо молчаливого "removed: 0" (что скрывает баги клиента).
+  if (!(await userExists(targetUserId))) {
+    const err = new Error('Target user not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
   // Проверяем права отзывающего
   const canShare =
     (await hasPermission(fileId, fromUserId, 'share')) ||
@@ -448,8 +543,13 @@ async function deleteFile(fileId, userId) {
  * @returns {Promise<Array>}
  */
 async function listUserFiles(userId) {
+  // P3-49: Запрашиваем только нужные колонки (не SELECT *).
+  // storage_key не возвращается клиенту — снижает риск утечки путей KS3.
+  // Список полей синхронизирован с filesController.listMyFiles.
   const result = await db.query(
-    `SELECT DISTINCT f.*
+    `SELECT DISTINCT
+       f.id, f.original_name, f.size, f.mime_type,
+       f.relative_path, f.is_inline, f.owner_id, f.created_at
      FROM files f
      LEFT JOIN file_permissions fp ON fp.file_id = f.id AND fp.user_id = $1
      WHERE f.owner_id = $1 OR fp.user_id = $1

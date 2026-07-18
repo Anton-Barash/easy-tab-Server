@@ -35,18 +35,32 @@ async function saveReport(request, reply) {
     return reply.status(400).send({ success: false, error: 'Report data is required' });
   }
 
+  // P3-49: Валидация reportId — должен быть положительным целым, если передан.
+  // Без этого можно передать NaN/string/отрицательное число, что приведёт
+  // к неожиданному поведению в SQL-запросе.
+  let parsedReportId = null;
+  if (reportId !== undefined && reportId !== null && reportId !== '') {
+    parsedReportId = Number(reportId);
+    if (!Number.isInteger(parsedReportId) || parsedReportId < 1) {
+      return reply.status(400).send({ success: false, error: 'Invalid reportId' });
+    }
+  }
+
   try {
     const report = await reportsService.saveReport({
       userId: request.user.userId,
       title,
       reportData,
-      reportId: reportId || null,
+      reportId: parsedReportId,
     });
 
     return reply.send({ success: true, report });
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({ success: false, error: error.message });
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to save report' : error.message,
+    });
   }
 }
 
@@ -69,17 +83,23 @@ async function listReports(request, reply) {
  */
 async function getReport(request, reply) {
   const { id } = request.params;
+  const reportId = parseInt(id, 10);
+
+  // M-28: проверка NaN — иначе NaN передаётся в SQL-запрос.
+  if (isNaN(reportId) || reportId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
 
   try {
-    const report = await reportsService.getReport(
-      parseInt(id, 10),
-      request.user.userId
-    );
-
+    const report = await reportsService.getReport(reportId, request.user.userId);
     return reply.send({ success: true, report });
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({ success: false, error: error.message });
+    return reply.status(status).send({
+      success: false,
+      // M-27: не раскрываем детали внутренних ошибок для 5xx
+      error: status >= 500 ? 'Failed to get report' : error.message,
+    });
   }
 }
 
@@ -91,13 +111,22 @@ async function getReport(request, reply) {
  */
 async function deleteReport(request, reply) {
   const { id } = request.params;
+  const reportId = parseInt(id, 10);
+
+  // M-28: проверка NaN
+  if (isNaN(reportId) || reportId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
 
   try {
-    await reportsService.deleteReport(parseInt(id, 10), request.user.userId);
+    await reportsService.deleteReport(reportId, request.user.userId);
     return reply.send({ success: true });
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({ success: false, error: error.message });
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to delete report' : error.message,
+    });
   }
 }
 

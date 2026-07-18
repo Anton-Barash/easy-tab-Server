@@ -8,8 +8,10 @@ const logger = require('../utils/logger');
 const pool = new Pool(dbConfig);
 
 // Log connection events
+// P3-60: debug вместо info — при каждом новом клиенте в пуле (до 20 шт.)
+// info-лог создаёт лишний шум без полезной информации.
 pool.on('connect', (client) => {
-  logger.info('New PostgreSQL client connected');
+  logger.debug('New PostgreSQL client connected');
 });
 
 pool.on('error', (err, client) => {
@@ -27,21 +29,16 @@ async function query(text, params) {
   try {
     const result = await pool.query(text, params);
     const duration = Date.now() - start;
-    logger.info(`Query executed in ${duration}ms: ${text}`);
+    // M-26: логируем только длительность и укороченный шаблон запроса (без параметров)
+    // на уровне debug, чтобы не засорять prod-логи и не утекали данные/схема.
+    const preview = typeof text === 'string' ? text.slice(0, 80) : String(text);
+    logger.debug({ duration, preview, paramsCount: Array.isArray(params) ? params.length : 0 }, 'Query executed');
     return result;
   } catch (error) {
-    logger.error(`Query error: ${error.message}`);
+    // M-26: не логируем параметры и полный текст запроса в error-лог.
+    logger.error({ err: error.message }, 'Query error');
     throw error;
   }
-}
-
-/**
- * Get a client from the pool for transaction
- * @returns {Promise<object>}
- */
-async function getClient() {
-  const client = await pool.connect();
-  return client;
 }
 
 /**
@@ -52,15 +49,11 @@ async function checkConnection() {
   try {
     const result = await query('SELECT NOW()');
     logger.info('Database connection successful');
+    // P0-52: конфигурация БД не должна покидать сервисный слой.
+    // Возвращаем только статус подключения и время.
     return {
       connected: true,
       timestamp: result.rows[0].now,
-      config: {
-        host: dbConfig.host,
-        port: dbConfig.port,
-        database: dbConfig.database,
-        user: dbConfig.user,
-      },
     };
   } catch (error) {
     logger.error(`Database connection failed: ${error.message}`);
@@ -120,10 +113,10 @@ async function closePool() {
 
 module.exports = {
   query,
-  getClient,
   checkConnection,
   getVersion,
   listTables,
   closePool,
+  // pool используется migrationRunner'ом (pool.connect() для транзакций миграций).
   pool,
 };

@@ -1,21 +1,38 @@
+// P3-49: Логируем только path-часть URL без query string
+// (query string может содержать чувствительные данные).
+function safeUrl(url) {
+  if (!url) return url;
+  const qIdx = url.indexOf('?');
+  return qIdx === -1 ? url : url.slice(0, qIdx);
+}
+
 function errorHandler(fastify) {
   fastify.setErrorHandler((error, request, reply) => {
     const statusCode = error.statusCode || 500;
+    const isServerError = statusCode >= 500;
 
-    request.log.error({
+    // L-102: stack trace только для 5xx — 4xx засоряют логи.
+    const logPayload = {
       error: {
         message: error.message,
-        stack: error.stack,
       },
       request: {
         method: request.method,
-        url: request.url,
+        url: safeUrl(request.url),
       },
-    });
+    };
+    if (isServerError) {
+      logPayload.error.stack = error.stack;
+      request.log.error(logPayload);
+    } else {
+      request.log.warn(logPayload);
+    }
 
+    // M-27: для 5xx не раскрываем детали ошибки клиенту.
+    // Для 4xx error.message обычно безопасен (404, 401, 403 и т.д.).
     reply.status(statusCode).send({
       error: {
-        message: statusCode === 500 ? 'Internal Server Error' : error.message,
+        message: isServerError ? 'Internal Server Error' : error.message,
         statusCode,
       },
     });

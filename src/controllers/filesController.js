@@ -26,9 +26,12 @@ const fileService = require('../services/fileService');
  *   - relativePath: относительный путь в папке отчёта (опционально)
  *   - parentId: UUID папки-родителя (опционально)
  *   - reportId: ID отчёта для привязки файла (опционально)
- *   - ks3Folder: папка отчёта в KS3 (опционально, например "reports/uuid/")
  *
- * Если передан reportId + ks3Folder — файл сохраняется в папку отчёта
+ * БЕЗОПАСНОСТЬ (H-10): поле ks3Folder больше НЕ принимается от клиента —
+ * путь к папке отчёта в KS3 вычисляется сервером из БД по reportId.
+ * relativePath валидируется сервером (sanitizeRelativePath).
+ *
+ * Если передан reportId — файл сохраняется в папку отчёта (reports/{uuid}/)
  * и привязывается к отчёту в БД.
  *
  * Возвращает: { success, file: { id, ... } }
@@ -44,36 +47,44 @@ async function uploadFile(request, reply) {
   const buffer = await data.toBuffer();
 
   // Получаем дополнительные поля из формы
+  // ВНИМАНИЕ: ks3Folder намеренно НЕ читаем из формы (H-10)
   const fields = data.fields;
   const relativePath = fields.relativePath?.value || null;
   const parentId = fields.parentId?.value || null;
   const reportId = fields.reportId?.value || null;
-  const ks3Folder = fields.ks3Folder?.value || null;
 
-  // Загружаем через сервис
-  const file = await fileService.uploadFile({
-    userId: request.user.userId,
-    originalName: data.filename,
-    body: buffer,
-    relativePath,
-    parentId,
-    reportId: reportId ? parseInt(reportId, 10) : null,
-    ks3Folder,
-  });
+  try {
+    // Загружаем через сервис
+    const file = await fileService.uploadFile({
+      userId: request.user.userId,
+      originalName: data.filename,
+      body: buffer,
+      relativePath,
+      parentId,
+      reportId: reportId ? parseInt(reportId, 10) : null,
+    });
 
-  return reply.status(201).send({
-    success: true,
-    file: {
-      id: file.id,
-      originalName: file.original_name,
-      size: file.size,
-      mimeType: file.mime_type,
-      relativePath: file.relative_path,
-      isInline: file.is_inline,
-      reportId: file.report_id,
-      createdAt: file.created_at,
-    },
-  });
+    return reply.status(201).send({
+      success: true,
+      file: {
+        id: file.id,
+        originalName: file.original_name,
+        size: file.size,
+        mimeType: file.mime_type,
+        relativePath: file.relative_path,
+        isInline: file.is_inline,
+        reportId: file.report_id,
+        createdAt: file.created_at,
+      },
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      // Не раскрываем детали внутренних ошибок (M-27)
+      error: status >= 500 ? 'File upload failed' : error.message,
+    });
+  }
 }
 
 // ------------------------------------------------------------
@@ -88,12 +99,15 @@ async function uploadFile(request, reply) {
  */
 async function listFilesByReport(request, reply) {
   const { reportId } = request.params;
+  const rid = parseInt(reportId, 10);
+
+  // M-28: проверка NaN
+  if (isNaN(rid) || rid < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
 
   try {
-    const files = await fileService.listFilesByReport(
-      parseInt(reportId, 10),
-      request.user.userId
-    );
+    const files = await fileService.listFilesByReport(rid, request.user.userId);
 
     return reply.send({
       success: true,
@@ -111,7 +125,7 @@ async function listFilesByReport(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to list files' : error.message,
     });
   }
 }
@@ -130,14 +144,18 @@ async function listFilesByReport(request, reply) {
  */
 async function getReportFileUrls(request, reply) {
   const { reportId } = request.params;
-  const expires = parseInt(request.query.expires, 10) || 3600;
+  const rid = parseInt(reportId, 10);
+
+  // M-28: проверка NaN
+  if (isNaN(rid) || rid < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+
+  // Клампим expires в безопасный диапазон 60..3600 секунд
+  const expires = Math.min(Math.max(parseInt(request.query.expires, 10) || 3600, 60), 3600);
 
   try {
-    const urls = await fileService.getReportFileUrls(
-      parseInt(reportId, 10),
-      request.user.userId,
-      expires
-    );
+    const urls = await fileService.getReportFileUrls(rid, request.user.userId, expires);
 
     return reply.send({
       success: true,
@@ -148,7 +166,7 @@ async function getReportFileUrls(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to get file URLs' : error.message,
     });
   }
 }
@@ -205,7 +223,8 @@ async function getFile(request, reply) {
  */
 async function downloadFile(request, reply) {
   const { id } = request.params;
-  const expires = parseInt(request.query.expires, 10) || 3600;
+  // Клампим expires в безопасный диапазон 60..3600 секунд
+  const expires = Math.min(Math.max(parseInt(request.query.expires, 10) || 3600, 60), 3600);
 
   try {
     const { url, file } = await fileService.getDownloadUrl(
@@ -229,7 +248,7 @@ async function downloadFile(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to get download URL' : error.message,
     });
   }
 }
@@ -248,13 +267,20 @@ async function downloadFile(request, reply) {
  */
 async function grantPermission(request, reply) {
   const { id } = request.params;
-  const { toUserId, permission } = request.body;
+  const { toUserId: rawToUserId, permission } = request.body;
 
-  // Валидация
-  if (!toUserId || !permission) {
+  // M-28: парсим toUserId как int с проверкой NaN
+  const toUserId = parseInt(rawToUserId, 10);
+  if (isNaN(toUserId) || toUserId < 1) {
     return reply
       .status(400)
-      .send({ success: false, error: 'toUserId and permission are required' });
+      .send({ success: false, error: 'Invalid toUserId' });
+  }
+
+  if (!permission) {
+    return reply
+      .status(400)
+      .send({ success: false, error: 'permission is required' });
   }
 
   const validPerms = ['read', 'write', 'share'];
@@ -262,6 +288,13 @@ async function grantPermission(request, reply) {
     return reply
       .status(400)
       .send({ success: false, error: 'Invalid permission type' });
+  }
+
+  // L-32: запрет самовыдачи прав
+  if (toUserId === request.user.userId) {
+    return reply
+      .status(400)
+      .send({ success: false, error: 'Cannot grant permission to yourself' });
   }
 
   try {
@@ -277,7 +310,7 @@ async function grantPermission(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to grant permission' : error.message,
     });
   }
 }
@@ -296,13 +329,20 @@ async function grantPermission(request, reply) {
  */
 async function revokePermission(request, reply) {
   const { id, userId } = request.params;
+  const targetUserId = parseInt(userId, 10);
+
+  // M-28: проверка NaN
+  if (isNaN(targetUserId) || targetUserId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid user id' });
+  }
+
   const permission = request.query.permission || null;
 
   try {
     const removed = await fileService.revokePermission({
       fileId: id,
       fromUserId: request.user.userId,
-      targetUserId: parseInt(userId, 10),
+      targetUserId,
       permission,
     });
 
@@ -311,7 +351,7 @@ async function revokePermission(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to revoke permission' : error.message,
     });
   }
 }
@@ -337,7 +377,7 @@ async function deleteFile(request, reply) {
     const status = error.statusCode || 500;
     return reply.status(status).send({
       success: false,
-      error: error.message,
+      error: status >= 500 ? 'Failed to delete file' : error.message,
     });
   }
 }

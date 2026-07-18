@@ -1,16 +1,24 @@
-// Database Routes - endpoints for database operations
+// ============================================================
+// Database Routes — эндпоинты администрирования БД
+//
+// БЕЗОПАСНОСТЬ: все эндпоинты защищены requireAuth (H-07).
+// В production рекомендуется дополнительно проверять admin-роль.
+// /database/check НЕ возвращает конфигурацию подключения
+// (host/port/user) — только статус подключения.
+// ============================================================
 
+const { requireAuth } = require('../middleware/authMiddleware');
 const databaseController = require('../controllers/databaseController');
 
 async function databaseRoutes(fastify) {
-  // Check database connection
-  fastify.get('/check', databaseController.checkConnection);
+  // Проверка подключения к БД (без раскрытия конфигурации)
+  fastify.get('/check', { preHandler: requireAuth }, databaseController.checkConnection);
 
-  // Get database version
-  fastify.get('/version', databaseController.getVersion);
+  // Версия PostgreSQL
+  fastify.get('/version', { preHandler: requireAuth }, databaseController.getVersion);
 
-  // List all tables
-  fastify.get('/tables', databaseController.listTables);
+  // Список таблиц
+  fastify.get('/tables', { preHandler: requireAuth }, databaseController.listTables);
 }
 
 module.exports = databaseRoutes;
