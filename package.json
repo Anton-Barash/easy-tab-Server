@@ -21,15 +21,18 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.0",
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^11.1.0",
+    "@fastify/static": "^10.1.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5",
     "ks3": "^1.0.0",
     "pg": "^8.13.0",
-    "pino": "^10.3.1"
+    "pino": "^10.3.1",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
     "pino-pretty": "^13.1.3"

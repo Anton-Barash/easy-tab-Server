@@ -14,10 +14,13 @@ const cors = require('@fastify/cors');
 const helmet = require('@fastify/helmet');
 const rateLimit = require('@fastify/rate-limit');
 const multipart = require('@fastify/multipart');
+const cookie = require('@fastify/cookie');
+const path = require('path');
 const config = require('./config');
 const errorHandler = require('./middleware/errorHandler');
 const requestLogger = require('./middleware/requestLogger');
 const registerRoutes = require('./routes');
+const viewRoutes = require('./routes/view');
 
 // ------------------------------------------------------------
 // Whitelist разрешённых источников для CORS.
@@ -53,21 +56,38 @@ function buildApp() {
   errorHandler(app);
   requestLogger(app);
 
+  // Регистрация cookie плагина для чтения auth_token cookie
+  app.register(cookie, {
+    secret: process.env.JWT_SECRET || 'default-secret', // для подписанных cookie (не используется, но требуется)
+  });
+
   // M-12: Security headers через helmet.
-  // CSP разрешает inline-изображения (data:) — используется в inline-file serving.
+  // CSP разрешает:
+  //   - inline-изображения (data:) — используется в inline-file serving
+  //   - inline-стили ('unsafe-inline') — для /view/report HTML с inline <style>
+  //   - inline-скрипты ('unsafe-inline') — для /view/report HTML с inline <script>
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
-        defaultSrc: ["'self'"],
-        imgSrc: ["'self'", 'data:'],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'"],
+        defaultSrc: ["'self'", 'https://*.gstatic.com'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://*.gstatic.com'],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrcAttr: ["'unsafe-inline'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],
+        workerSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
+        childSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
+        fontSrc: ["'self'", 'data:', 'https://*.gstatic.com'],
+        connectSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
+        mediaSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
+        manifestSrc: ["'self'"],
       },
     },
-    // HSTS только в production (в dev нет HTTPS)
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
     hsts: config.env === 'production',
   });
 
@@ -94,7 +114,7 @@ function buildApp() {
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
-    // credentials убран: auth через Authorization: Bearer, не куки (M-13)
+    credentials: true, // Разрешаем cookies для кросс-доменных запросов (iframe)
   });
 
   app.register(multipart, {
@@ -112,7 +132,26 @@ function buildApp() {
   // Регистрация routes
   app.register(registerRoutes);
 
-  return app;
+  // Регистрация view routes (для просмотра HTML отчётов)
+  app.register(viewRoutes, { prefix: '/view' });
+
+  app.register(require('@fastify/static'), {
+    root: path.join(__dirname, '../web'),
+    prefix: '/',
+    schemaHide: true,
+    wildcard: false,
+});
+
+app.setNotFoundHandler({ prefix: '/' }, (request, reply) => {
+    const accept = request.headers.accept || '';
+    if (accept.includes('text/html')) {
+        reply.sendFile('index.html', path.join(__dirname, '../web'));
+    } else {
+        reply.status(404).send({ success: false, error: 'Not found' });
+    }
+});
+
+return app;
 }
 
 module.exports = buildApp;

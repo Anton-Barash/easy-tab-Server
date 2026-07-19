@@ -130,9 +130,63 @@ async function deleteReport(request, reply) {
   }
 }
 
+/**
+ * GET /reports/:id/html
+ * Получить HTML отчёта для отображения внутри Flutter (через iframe srcdoc).
+ *
+ * Сервер:
+ *   1. Проверяет доступ (владелец / публичный)
+ *   2. Скачивает report.json из KS3
+ *   3. Генерирует HTML с АБСОЛЮТНЫМИ URL к фото (через baseUrl)
+ *   4. Возвращает JSON { success, html }
+ *
+ * Flutter вызывает этот эндпоинт, получает HTML-строку и
+ * отображает её в iframe srcdoc (оставаясь на localhost:4000).
+ *
+ * Возвращает: { success: true, html: string }
+ */
+async function getReportHtml(request, reply) {
+  const { id } = request.params;
+  const reportId = parseInt(id, 10);
+
+  if (isNaN(reportId) || reportId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+
+  try {
+    const userId = request.user.userId;
+    const report = await reportsService.getReportForView(reportId, userId);
+
+    if (!report.ks3Folder) {
+      return reply.status(404).send({ success: false, error: 'Report files not found' });
+    }
+
+    // Для приватных отчётов: токен нужен для proxy-URL фото.
+    // Cookies не работают для кросс-оригинных запросов из iframe (localhost:4000 -> localhost:8000),
+    // поэтому передаём токен в URL.
+    const authHeader = request.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    // Формируем baseUrl для абсолютных URL в HTML (чтобы iframe мог загрузить фото).
+    // В dev: http://localhost:8000, в prod: https://domain.com
+    const baseUrl = `${request.protocol}://${request.host}`;
+
+    const html = await reportsService.getReportHtml(report.ks3Folder, reportId, token, baseUrl);
+
+    return reply.send({ success: true, html });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate HTML' : error.message,
+    });
+  }
+}
+
 module.exports = {
   saveReport,
   listReports,
   getReport,
   deleteReport,
+  getReportHtml,
 };

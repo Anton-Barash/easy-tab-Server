@@ -13,6 +13,7 @@ const db = require('../services/databaseService');
 const ks3 = require('./ks3Storage');
 const { generateUuid, sanitizeFilename, buildStorageKey } = require('../utils/fileUtils');
 const logger = require('../utils/logger');
+const { generateReportHtml } = require('./htmlGenerator');
 
 /**
  * Сохранить отчёт (создать новый или обновить существующий).
@@ -247,9 +248,177 @@ async function deleteReport(reportId, userId) {
   return true;
 }
 
+/**
+ * Получить отчёт для просмотра (с проверкой доступа).
+ *
+ * Если отчёт публичный - доступен всем.
+ * Если приватный - только владельцу.
+ *
+ * @param {number} reportId - ID отчёта
+ * @param {number|null} userId - ID пользователя (null для анонимов)
+ * @returns {Promise<{id, title, ks3Folder, isPublic, creatorUserId}>}
+ */
+async function getReportForView(reportId, userId) {
+  const result = await db.query(
+    'SELECT id, title, ks3_folder, is_public, creator_user_id FROM reports WHERE id = $1',
+    [reportId]
+  );
+
+  if (result.rows.length === 0) {
+    const err = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const report = result.rows[0];
+
+  // Проверка доступа
+  if (!report.is_public && (!userId || userId !== report.creator_user_id)) {
+    const err = new Error('Access denied');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return {
+    id: report.id,
+    title: report.title,
+    ks3Folder: report.ks3_folder,
+    isPublic: report.is_public,
+    creatorUserId: report.creator_user_id,
+  };
+}
+
+/**
+ * Получить HTML отчёта.
+ *
+ * Скачивает report.json из KS3 и генерирует HTML на сервере
+ * (без загрузки готового HTML с клиента).
+ *
+ * Пути к медиа сразу генерируются как proxy-пути с токеном:
+ *   /view/report/:id/files/photos/f1.jpg?token=xxx
+ * чтобы браузер запрашивал файлы через сервер (KS3-ключи скрыты).
+ *
+ * @param {string} ks3Folder - папка отчёта в KS3
+ * @param {number} reportId - ID отчёта (для proxy-путей)
+ * @param {string|null} token - JWT-токен (добавляется в URL для приватных отчётов)
+ * @param {string} [baseUrl] - базовый URL сервера для абсолютных URL к фото
+ * @returns {Promise<string>} HTML-контент
+ */
+async function getReportHtml(ks3Folder, reportId, token, baseUrl) {
+  const jsonKey = `${ks3Folder}report.json`;
+  const fileData = await ks3.getFile(jsonKey);
+  const jsonString = fileData.data.toString('utf-8');
+  let reportData;
+  try {
+    reportData = JSON.parse(jsonString);
+  } catch (e) {
+    const err = new Error('Invalid report JSON: ' + e.message);
+    err.statusCode = 500;
+    throw err;
+  }
+  logger.info(`getReportHtml: generated HTML from JSON for report ${reportId}`);
+  return generateReportHtml(reportData, reportId, token, baseUrl);
+}
+
+/**
+ * Получить файл из KS3 для проксирования.
+ *
+ * @param {string} ks3Folder - папка отчёта в KS3
+ * @param {string} relativePath - относительный путь файла
+ * @returns {Promise<{data: Buffer, contentType: string}>}
+ */
+async function getReportFile(ks3Folder, relativePath) {
+  const fileKey = `${ks3Folder}${relativePath}`;
+  logger.info(`getReportFile: ks3Folder="${ks3Folder}", relativePath="${relativePath}", fileKey="${fileKey}"`);
+  let fileData;
+  try {
+    fileData = await ks3.getFile(fileKey);
+  } catch (err) {
+    logger.error(`getReportFile: KS3 error for key "${fileKey}": ${err && err.message ? err.message : JSON.stringify(err)}`);
+    const e = new Error('File not found in KS3');
+    e.statusCode = 404;
+    throw e;
+  }
+
+  // Определяем MIME-тип по расширению
+  const ext = relativePath.split('.').pop().toLowerCase();
+  const mimeTypes = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    mp4: 'video/mp4',
+    webm: 'video/webm',
+    html: 'text/html',
+    css: 'text/css',
+    js: 'application/javascript',
+  };
+
+  const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+  return {
+    data: fileData.data,
+    contentType,
+  };
+}
+
+async function getReportFileByKey(storageKey) {
+  try {
+    const fileData = await ks3.getFile(storageKey);
+    if (!fileData) {
+      return null;
+    }
+
+    const ext = storageKey.split('.').pop().toLowerCase();
+    const mimeTypes = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      bmp: 'image/bmp',
+      mp4: 'video/mp4',
+      webm: 'video/webm',
+      mov: 'video/quicktime',
+      avi: 'video/x-msvideo',
+      json: 'application/json',
+      html: 'text/html',
+      css: 'text/css',
+      js: 'application/javascript',
+    };
+
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+    return {
+      data: fileData.data,
+      contentType,
+    };
+  } catch (error) {
+    logger.warn(`getReportFileByKey: failed to get ${storageKey}: ${error.message}`);
+    return null;
+  }
+}
+
+async function saveReportFile(storageKey, data, contentType) {
+  try {
+    await ks3.saveFile(storageKey, data, contentType);
+    logger.debug(`saveReportFile: saved ${storageKey}`);
+    return true;
+  } catch (error) {
+    logger.error(`saveReportFile: failed to save ${storageKey}: ${error.message}`);
+    throw error;
+  }
+}
+
 module.exports = {
   saveReport,
   listReports,
   getReport,
   deleteReport,
+  getReportForView,
+  getReportHtml,
+  getReportFile,
+  getReportFileByKey,
+  saveReportFile,
 };

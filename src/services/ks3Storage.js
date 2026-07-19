@@ -143,7 +143,13 @@ async function getFile(key) {
         },
         (err, data, response) => {
           if (err) {
-            logger.error(`KS3 download error: ${err}`);
+            const errInfo = {
+              message: err && err.message ? err.message : 'unknown',
+              code: err && err.code ? err.code : null,
+              statusCode: err && err.statusCode ? err.statusCode : (response && response.statusCode),
+              body: err && err.body ? String(err.body).substring(0, 200) : null,
+            };
+            logger.error(`KS3 download error for key "${key}": ${JSON.stringify(errInfo)}`);
             reject(err);
           } else {
             resolve(data);

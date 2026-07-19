@@ -14,6 +14,7 @@
 
 const db = require('../services/databaseService');
 const ks3 = require('./ks3Storage');
+const thumbnailService = require('./thumbnailService');
 const {
   generateUuid,
   sanitizeFilename,
@@ -144,6 +145,18 @@ async function uploadFile({ userId, originalName, body, relativePath, parentId, 
   );
   await ks3.saveFile(storageKey, body, mimeType);
 
+  // 6.5. Генерируем и сохраняем миниатюру для изображений
+  if (thumbnailService.isImageFile(mimeType)) {
+    try {
+      const thumbnailBuffer = await thumbnailService.generateThumbnail(body);
+      const thumbnailKey = thumbnailService.getThumbnailStorageKey(storageKey);
+      await ks3.saveFile(thumbnailKey, thumbnailBuffer, 'image/jpeg');
+      logger.info(`uploadFile: thumbnail saved for ${storageKey} as ${thumbnailKey}`);
+    } catch (thumbErr) {
+      logger.warn(`uploadFile: failed to generate/save thumbnail for ${storageKey}: ${thumbErr.message}`);
+    }
+  }
+
   // 7. Создаём запись в таблице files + owner-право в одной транзакции (P0-51).
   // Оба INSERT должны быть атомарны — иначе файл в KS3 без прав или наоборот.
   let fileRecord;
@@ -192,6 +205,7 @@ async function uploadFile({ userId, originalName, body, relativePath, parentId, 
     throw dbErr;
   }
   dbClient.release();
+  return fileRecord;
 }
 
 // ------------------------------------------------------------
