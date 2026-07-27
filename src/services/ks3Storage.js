@@ -13,6 +13,9 @@
 // ============================================================
 
 const KS3 = require('ks3');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const logger = require('../utils/logger');
 
 // ------------------------------------------------------------
@@ -82,17 +85,24 @@ function getRegion() {
  * @returns {Promise<object>} информация о загруженном файле
  */
 async function saveFile(key, body, mimeType = 'application/octet-stream') {
+  let tmpFile = null;
   try {
     // P3-49: storage_key (path в бакете) не логируем на info — только на debug.
     logger.info(`KS3 upload: ${body.length} bytes, ${mimeType}`);
     logger.debug(`KS3 upload key: ${key}`);
+
+    // KS3 SDK копирует Buffer в память при вычислении CRC64 (WebAssembly),
+    // что приводит к OOM для файлов > ~15 MB. Сохраняем тело во временный файл
+    // и передаём путь — SDK тогда использует поток и считает CRC по чанкам.
+    tmpFile = path.join(os.tmpdir(), `ks3-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.promises.writeFile(tmpFile, body);
 
     await new Promise((resolve, reject) => {
       client.object.put(
         {
           Bucket: KS3_CONFIG.bucket,
           Key: key,
-          Body: body,
+          FilePath: tmpFile,
           // Передаём MIME-тип — KS3 сохранит его в Content-Type объекта.
           // Для HTML это обеспечит отображение в браузере по подписанной ссылке.
           ContentType: mimeType,
@@ -119,6 +129,14 @@ async function saveFile(key, body, mimeType = 'application/octet-stream') {
   } catch (error) {
     logger.error(`Failed to upload to KS3: ${error.message}`);
     throw error;
+  } finally {
+    if (tmpFile) {
+      try {
+        await fs.promises.unlink(tmpFile);
+      } catch (unlinkErr) {
+        logger.warn(`Failed to remove temp file ${tmpFile}: ${unlinkErr.message}`);
+      }
+    }
   }
 }
 

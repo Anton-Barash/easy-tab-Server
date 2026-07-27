@@ -2,14 +2,13 @@
 // HTML Generator — генерация HTML-отчёта из JSON на сервере.
 //
 // Порт _generateHtml() из easy_tab/lib/providers/report_provider.dart.
-// Вместо путей вида "photos/f1.jpg" генерирует сразу proxy-пути:
-//   /view/report/:id/files/photos/f1.jpg
-// чтобы браузер запрашивал файлы через серверный прокси (не через KS3).
+// Вместо локальных путей вида "photos/f1.jpg" использует подписанные
+// presigned URL из KS3. Если для медиа нет готового URL — fallback
+// на серверный прокси /view/report/:id/files/...
 //
 // Безопасность:
 //   - Все пользовательские данные экранируются (escapeHtml)
-//   - Пути к файлам идут только через серверный прокси
-//   - KS3-ключи не раскрываются клиенту
+//   - KS3-ключи не раскрываются клиенту (только подписанные URL)
 // ============================================================
 
 const logger = require('../utils/logger');
@@ -164,25 +163,33 @@ function getQuestionDisplayName(question, langCode, questionIndex) {
  * Сгенерировать HTML-отчёт из JSON данных.
  *
  * @param {object} reportData - JSON-объект отчёта (Report.toJson())
- * @param {number} reportId - ID отчёта (для формирования proxy-путей)
- * @param {string|null} token - JWT-токен (добавляется в URL для приватных отчётов)
- * @param {string} [baseUrl] - базовый URL сервера (например 'http://localhost:8000') для абсолютных URL
+ * @param {number} reportId - ID отчёта (для формирования fallback proxy-путей)
+ * @param {string|null} token - JWT-токен (добавляется в URL fallback proxy для приватных отчётов)
+ * @param {string} [baseUrl] - базовый URL сервера для абсолютных fallback URL
+ * @param {Object} [mediaUrls] - { 'photos/f1.jpg': { full, thumb }, ... } presigned URL из KS3
+ * @param {string} [ks3Folder] - папка отчёта в KS3 (не используется напрямую, оставлена для совместимости)
  * @returns {string} HTML-страница
  */
-function generateReportHtml(reportData, reportId, token, baseUrl) {
+function generateReportHtml(reportData, reportId, token, baseUrl, mediaUrls, ks3Folder) {
   if (!reportData) {
     return '<html><body>Нет отчёта</body></html>';
   }
 
-  // Proxy-путь для файлов с токеном (если есть)
-  // Если baseUrl задан — генерируем абсолютные URL (для iframe srcdoc во Flutter).
+  // Формирует presigned/full URL для медиа. Если готового URL нет — fallback на proxy.
   const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
-  const proxyPrefix = baseUrl
-    ? `${baseUrl}/view/report/${reportId}/files/`
-    : `/view/report/${reportId}/files/`;
-  const thumbnailPrefix = baseUrl
-    ? `${baseUrl}/view/report/${reportId}/thumbnails/`
-    : `/view/report/${reportId}/thumbnails/`;
+  function resolveMediaUrls(localPath, mediaName) {
+    const key = localPath || mediaName;
+    if (mediaUrls && mediaUrls[key]) {
+      return mediaUrls[key];
+    }
+    const proxyBase = baseUrl
+      ? `${baseUrl}/view/report/${reportId}`
+      : `/view/report/${reportId}`;
+    const full = `${proxyBase}/files/${localPath}${tokenSuffix}`;
+    const thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}`;
+    return { full, thumb };
+  }
+
   const reportName = escapeHtml(reportData.reportName ?? '');
   const dateTime = formatDateTime(reportData.timestamp ?? Date.now());
   const allLanguages = reportData.availableLanguages ?? [];
@@ -410,7 +417,7 @@ function generateReportHtml(reportData, reportId, token, baseUrl) {
       const mParts = [];
       for (let li = 0; li < languages.length; li++) {
         const style = li === 0 ? '' : 'display:none;';
-        mParts.push(`<span class="media-lang-${li}" style="${style}">${mediaCellContent(ai, li, i, allMediaByQandAandLang, questionNames, answersByLang, proxyPrefix, tokenSuffix, thumbnailPrefix)}</span>`);
+        mParts.push(`<span class="media-lang-${li}" style="${style}">${mediaCellContent(ai, li, i, allMediaByQandAandLang, questionNames, answersByLang, resolveMediaUrls)}</span>`);
       }
       buf.push(`      <td style="background:#fafafa;width:200px;">${mParts.join('')}</td>`);
 
@@ -676,11 +683,12 @@ function generateReportHtml(reportData, reportId, token, baseUrl) {
  * Генерирует HTML для ячейки с медиа-файлами.
  * Порт mediaCellContent() из Dart.
  *
- * ВАЖНО: пути к файлам сразу генерируются как proxy-пути:
- *   /view/report/:id/files/photos/f1.jpg?token=xxx
- *   /view/report/:id/thumbnails/photos/f1.jpg?token=xxx (для миниатюр)
+ * ВАЖНО: пути к файлам — подписанные presigned URL из KS3.
+ * Если URL нет — fallback на серверный прокси.
+ *
+ * @param {Function} resolveMediaUrls - (localPath, mediaName) => { full, thumb }
  */
-function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames, answersByLang, proxyPrefix, tokenSuffix, thumbnailPrefix) {
+function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames, answersByLang, resolveMediaUrls) {
   if (ai >= allMediaByQandAandLang[qIndex][li].length) {
     return '<div class="media-thumbnails"></div>';
   }
@@ -698,8 +706,9 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
   for (let mi = 0; mi < visibleCount; mi++) {
     const media = mediaList[mi];
     const isImage = media.type.startsWith('image');
-    const fullSrc = proxyPrefix + media.localPath + tokenSuffix;
-    const thumbnailSrc = thumbnailPrefix + media.localPath + tokenSuffix;
+    const urls = resolveMediaUrls(media.localPath, media.name);
+    const fullSrc = urls.full;
+    const thumbnailSrc = urls.thumb || urls.full;
     const escapedName = escapeHtml(media.name ?? '');
 
     if (isImage) {
@@ -730,7 +739,8 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
   for (let mi = visibleCount; mi < mediaList.length; mi++) {
     const media = mediaList[mi];
     const isImage = media.type.startsWith('image');
-    const fullSrc = proxyPrefix + media.localPath + tokenSuffix;
+    const urls = resolveMediaUrls(media.localPath, media.name);
+    const fullSrc = urls.full;
     const escapedName = escapeHtml(media.name ?? '');
 
     if (isImage) {

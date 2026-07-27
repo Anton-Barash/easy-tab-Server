@@ -20,6 +20,21 @@ function generateUuid() {
 }
 
 /**
+ * Генерирует короткий публичный идентификатор для URL.
+ * 10 символов [a-z0-9] — достаточно для ~3.4 триллионов комбинаций,
+ * не раскрывает порядковый номер и длину последовательности.
+ */
+function generatePublicId() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  const randomBytes = crypto.randomBytes(10);
+  for (let i = 0; i < 10; i++) {
+    result += chars[randomBytes[i] % chars.length];
+  }
+  return result;
+}
+
+/**
  * Очищает имя файла от опасных символов.
  * Оставляет только: буквы, цифры, точки, дефисы, подчёркивания.
  * Также обрезает до 200 символов, чтобы не было проблем с KS3.
@@ -220,6 +235,7 @@ function buildStorageKey(uuid, filename) {
 
 module.exports = {
   generateUuid,
+  generatePublicId,
   sanitizeFilename,
   sanitizeRelativePath,
   getMimeType,

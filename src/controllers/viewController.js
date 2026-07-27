@@ -2,12 +2,12 @@
 // View Controller — обработчики HTTP-запросов к /view
 //
 // Эндпоинты:
-//   GET /view/report/:id/files/*  — проксировать файлы из KS3 (фото, видео)
+//   GET /view/report/:publicId/files/*  — проксировать файлы из KS3 (фото, видео)
 //
 // Использование:
-//   - HTML отчёт получается через /reports/:id/html (см. reportsController)
+//   - HTML отчёт получается через /reports/:publicId/html (см. reportsController)
 //   - Flutter отображает HTML в iframe (srcdoc) на localhost:4000
-//   - Медиа в HTML имеет ссылки на /view/report/:id/files/...
+//   - Медиа в HTML имеет ссылки на /view/report/:publicId/files/...
 //   - Браузер загружает медиа через этот прокси
 //
 // Авторизация:
@@ -35,20 +35,16 @@ function normalizeKs3Path(p) {
 }
 
 /**
- * GET /view/report/:id
+ * GET /view/report/:publicId
  * Получить HTML отчёта для просмотра в браузере.
  *
- * Сервер скачивает report.json из KS3 и генерирует HTML
- * (без загрузки готового HTML с клиента).
- *
- * Пути к медиа сразу генерируются как proxy-пути:
- *   /view/report/:id/files/photos/f1.jpg
+ * Сервер читает JSON-данные отчёта из БД, генерирует presigned URL
+ * для медиафайлов и строит HTML (без загрузки готового HTML с клиента).
  */
 async function viewReport(request, reply) {
-  const { id } = request.params;
-  const reportId = parseInt(id, 10);
+  const { publicId } = request.params;
 
-  if (isNaN(reportId) || reportId < 1) {
+  if (!publicId || publicId.length < 6) {
     return reply.status(400).send({ success: false, error: 'Invalid report id' });
   }
 
@@ -56,25 +52,18 @@ async function viewReport(request, reply) {
     // Получаем userId из request.user (может быть null для анонимов)
     const userId = request.user?.userId || null;
 
-    // Получаем отчёт с проверкой доступа
-    const report = await reportsService.getReportForView(reportId, userId);
+    // Получаем отчёт с проверкой доступа (включает report_data)
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
-    // Проверяем, что есть ks3Folder
-    if (!report.ks3Folder) {
-      logger.warn(`viewReport: report ${reportId} has no ks3_folder`);
-      return reply.status(404).send({ success: false, error: 'Report files not found' });
-    }
+    // Генерируем HTML из JSON БД с presigned URL для медиа
+    const html = await reportsService.getReportHtml(report, null, null);
 
-    // Генерируем HTML из JSON (пути к медиа уже proxy, без токена в URL)
-    // Авторизация для файлов осуществляется через cookies
-    const html = await reportsService.getReportHtml(report.ks3Folder, reportId);
-
-    logger.info(`viewReport: serving report ${reportId} (public=${report.isPublic})`);
+    logger.info(`viewReport: serving report ${report.publicId} (public=${report.isPublic})`);
 
     return reply.type('text/html').send(html);
   } catch (error) {
     const status = error.statusCode || 500;
-    logger.error(`viewReport: error ${status} for report ${reportId}: ${error.message}`);
+    logger.error(`viewReport: error ${status} for report ${publicId}: ${error.message}`);
     return reply.status(status).send({
       success: false,
       error: status >= 500 ? 'Failed to load report' : error.message,
@@ -83,7 +72,7 @@ async function viewReport(request, reply) {
 }
 
 /**
- * GET /view/report/:id/files/*
+ * GET /view/report/:publicId/files/*
  * Получить файл из отчёта (изображения, видео и т.д.).
  *
  * Защита:
@@ -114,10 +103,9 @@ async function viewReportFile(request, reply) {
     reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
   }
 
-  const { id } = request.params;
-  const reportId = parseInt(id, 10);
+  const { publicId } = request.params;
 
-  if (isNaN(reportId) || reportId < 1) {
+  if (!publicId || publicId.length < 6) {
     return reply.status(400).send({ success: false, error: 'Invalid report id' });
   }
 
@@ -134,7 +122,7 @@ async function viewReportFile(request, reply) {
   // - проверяем, что путь не абсолютный
   const normalizedPath = normalizeKs3Path(relativePath);
   if (relativePath.includes('..') || normalizedPath.includes('..') || path.posix.isAbsolute(normalizedPath)) {
-    logger.warn(`viewReportFile: path traversal attempt for report ${reportId}: ${relativePath}`);
+    logger.warn(`viewReportFile: path traversal attempt for report ${publicId}: ${relativePath}`);
     return reply.status(400).send({ success: false, error: 'Invalid file path' });
   }
 
@@ -147,16 +135,16 @@ async function viewReportFile(request, reply) {
     'css', 'js',
   ];
   if (!allowedExtensions.includes(ext)) {
-    logger.warn(`viewReportFile: blocked extension "${ext}" for report ${reportId}: ${relativePath}`);
+    logger.warn(`viewReportFile: blocked extension "${ext}" for report ${publicId}: ${relativePath}`);
     return reply.status(403).send({ success: false, error: 'File type not allowed' });
   }
 
   try {
     const userId = request.user?.userId || null;
-    const report = await reportsService.getReportForView(reportId, userId);
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
     if (!report.ks3Folder) {
-      logger.warn(`viewReportFile: report ${reportId} has no ks3_folder`);
+      logger.warn(`viewReportFile: report ${report.publicId} has no ks3_folder`);
       return reply.status(404).send({ success: false, error: 'Report files not found' });
     }
 
@@ -166,12 +154,12 @@ async function viewReportFile(request, reply) {
     // Кэшируем на 1 час (файлы отчётов редко меняются)
     reply.header('Cache-Control', 'public, max-age=3600');
 
-    logger.debug(`viewReportFile: serving ${normalizedPath} for report ${reportId}`);
+    logger.debug(`viewReportFile: serving ${normalizedPath} for report ${report.publicId}`);
 
     return reply.type(file.contentType).send(file.data);
   } catch (error) {
     const status = error.statusCode || 500;
-    logger.error(`viewReportFile: error ${status} for report ${reportId}, file ${relativePath}: ${error.message}`);
+    logger.error(`viewReportFile: error ${status} for report ${publicId}, file ${relativePath}: ${error.message}`);
     return reply.status(status).send({
       success: false,
       error: status >= 500 ? 'Failed to load file' : error.message,
@@ -192,10 +180,9 @@ async function viewReportThumbnail(request, reply) {
     reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
   }
 
-  const { id } = request.params;
-  const reportId = parseInt(id, 10);
+  const { publicId } = request.params;
 
-  if (isNaN(reportId) || reportId < 1) {
+  if (!publicId || publicId.length < 6) {
     return reply.status(400).send({ success: false, error: 'Invalid report id' });
   }
 
@@ -207,7 +194,7 @@ async function viewReportThumbnail(request, reply) {
 
   const normalizedPath = normalizeKs3Path(relativePath);
   if (relativePath.includes('..') || normalizedPath.includes('..') || path.posix.isAbsolute(normalizedPath)) {
-    logger.warn(`viewReportThumbnail: path traversal attempt for report ${reportId}: ${relativePath}`);
+    logger.warn(`viewReportThumbnail: path traversal attempt for report ${publicId}: ${relativePath}`);
     return reply.status(400).send({ success: false, error: 'Invalid file path' });
   }
 
@@ -216,16 +203,16 @@ async function viewReportThumbnail(request, reply) {
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
   ];
   if (!allowedExtensions.includes(ext)) {
-    logger.warn(`viewReportThumbnail: blocked extension "${ext}" for report ${reportId}: ${relativePath}`);
+    logger.warn(`viewReportThumbnail: blocked extension "${ext}" for report ${publicId}: ${relativePath}`);
     return reply.status(403).send({ success: false, error: 'File type not allowed' });
   }
 
   try {
     const userId = request.user?.userId || null;
-    const report = await reportsService.getReportForView(reportId, userId);
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
     if (!report.ks3Folder) {
-      logger.warn(`viewReportThumbnail: report ${reportId} has no ks3_folder`);
+      logger.warn(`viewReportThumbnail: report ${publicId} has no ks3_folder`);
       return reply.status(404).send({ success: false, error: 'Report files not found' });
     }
 
@@ -248,12 +235,12 @@ async function viewReportThumbnail(request, reply) {
     }
 
     reply.header('Cache-Control', 'public, max-age=3600');
-    logger.debug(`viewReportThumbnail: serving ${normalizedPath} for report ${reportId}`);
+    logger.debug(`viewReportThumbnail: serving ${normalizedPath} for report ${publicId}`);
 
     return reply.type(file.contentType).send(file.data);
   } catch (error) {
     const status = error.statusCode || 500;
-    logger.error(`viewReportThumbnail: error ${status} for report ${reportId}, file ${relativePath}: ${error.message}`);
+    logger.error(`viewReportThumbnail: error ${status} for report ${publicId}, file ${relativePath}: ${error.message}`);
     return reply.status(status).send({
       success: false,
       error: status >= 500 ? 'Failed to load thumbnail' : error.message,

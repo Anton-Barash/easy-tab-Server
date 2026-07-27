@@ -70,7 +70,7 @@ function buildApp() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'", 'https://*.gstatic.com'],
-        imgSrc: ["'self'", 'data:', 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
+        imgSrc: ["'self'", 'data:', 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://*.gstatic.com'],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
@@ -81,8 +81,8 @@ function buildApp() {
         workerSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
         childSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
         fontSrc: ["'self'", 'data:', 'https://*.gstatic.com'],
-        connectSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
-        mediaSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com'],
+        connectSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
+        mediaSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
         manifestSrc: ["'self'"],
       },
     },

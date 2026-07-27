@@ -2,7 +2,8 @@
 // Reports Service — бизнес-логика работы с отчётами
 //
 // Для web-клиента отчёты хранятся на сервере:
-//   - JSON отчёта → в KS3 (как файл)
+//   - JSON отчёта → в таблице reports (PostgreSQL, column report_data JSONB)
+//   - KS3-копия JSON → бекап (reports/{UUID}/report.json)
 //   - метаданные → в таблице reports (PostgreSQL)
 //
 // Это позволяет web-версии сохранять и загружать отчёты
@@ -11,7 +12,8 @@
 
 const db = require('../services/databaseService');
 const ks3 = require('./ks3Storage');
-const { generateUuid, sanitizeFilename, buildStorageKey } = require('../utils/fileUtils');
+const thumbnailService = require('./thumbnailService');
+const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey } = require('../utils/fileUtils');
 const logger = require('../utils/logger');
 const { generateReportHtml } = require('./htmlGenerator');
 
@@ -57,18 +59,19 @@ async function saveReport({ userId, title, reportData, reportId }) {
       ? `${ks3Folder}report.json`
       : row.file_path;
 
-    // Перезаписываем JSON в KS3
+    // Перезаписываем JSON в KS3 (бекап)
     await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
-    // Обновляем заголовок (на случай если изменился)
+    // Обновляем заголовок и JSON-данные в БД
     await db.query(
-      'UPDATE reports SET title = $1 WHERE id = $2',
-      [title, reportId]
+      'UPDATE reports SET title = $1, report_data = $2::jsonb WHERE id = $3',
+      [title, reportData, reportId]
     );
 
     logger.info(`saveReport: updated report ${reportId} for user ${userId}`);
     return {
       id: parseInt(reportId, 10),
+      publicId: row.public_id,
       title,
       fileKey,
       ks3Folder,
@@ -81,19 +84,21 @@ async function saveReport({ userId, title, reportData, reportId }) {
   const ks3Folder = `reports/${uuid}/`;
   // JSON лежит в корне папки отчёта
   const fileKey = `${ks3Folder}report.json`;
+  // Короткий публичный идентификатор для URL просмотра
+  const publicId = generatePublicId();
 
-  // Загружаем JSON в KS3
+  // Загружаем JSON в KS3 (бекап)
   await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
-  // Создаём запись в БД (с ks3_folder).
+  // Создаём запись в БД (с ks3_folder, report_data и public_id).
   // C-34: если INSERT упадёт — удаляем осиротевший файл из KS3 (компенсация).
   let row;
   try {
     const result = await db.query(
-      `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level)
-       VALUES ($1, $2, $3, $4, 'specific')
-       RETURNING id, title, created_at`,
-      [title, fileKey, ks3Folder, userId]
+      `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level, report_data, public_id)
+       VALUES ($1, $2, $3, $4, 'specific', $5::jsonb, $6)
+       RETURNING id, title, created_at, public_id`,
+      [title, fileKey, ks3Folder, userId, reportData, publicId]
     );
     row = result.rows[0];
   } catch (insertErr) {
@@ -106,10 +111,11 @@ async function saveReport({ userId, title, reportData, reportId }) {
     throw insertErr;
   }
 
-  logger.info(`saveReport: created report ${row.id} for user ${userId}, folder=${ks3Folder}`);
+  logger.info(`saveReport: created report ${row.id} (${row.public_id}) for user ${userId}, folder=${ks3Folder}`);
 
   return {
     id: row.id,
+    publicId: row.public_id,
     title: row.title,
     fileKey,
     ks3Folder,
@@ -127,7 +133,7 @@ async function saveReport({ userId, title, reportData, reportId }) {
  */
 async function listReports(userId) {
   const result = await db.query(
-    `SELECT id, title, created_at
+    `SELECT id, title, created_at, public_id
      FROM reports
      WHERE creator_user_id = $1
      ORDER BY created_at DESC`,
@@ -136,6 +142,7 @@ async function listReports(userId) {
 
   return result.rows.map((row) => ({
     id: row.id,
+    publicId: row.public_id,
     title: row.title,
     createdAt: row.created_at,
   }));
@@ -155,7 +162,7 @@ async function listReports(userId) {
 async function getReport(reportId, userId) {
   // Проверяем доступ
   const meta = await db.query(
-    'SELECT * FROM reports WHERE id = $1 AND creator_user_id = $2',
+    'SELECT id, title, file_path, ks3_folder, report_data, public_id FROM reports WHERE id = $1 AND creator_user_id = $2',
     [reportId, userId]
   );
 
@@ -169,13 +176,18 @@ async function getReport(reportId, userId) {
   const fileKey = row.file_path;
   const ks3Folder = row.ks3_folder || null;
 
-  // Скачиваем JSON из KS3
-  const fileData = await ks3.getFile(fileKey);
-  const jsonString = fileData.data.toString('utf-8');
-  const reportData = JSON.parse(jsonString);
+  // Читаем JSON из БД; если нет — fallback на KS3 (старые отчёты).
+  let reportData = row.report_data;
+  if (!reportData) {
+    logger.info(`getReport: report ${reportId} has no report_data, falling back to KS3`);
+    const fileData = await ks3.getFile(fileKey);
+    const jsonString = fileData.data.toString('utf-8');
+    reportData = JSON.parse(jsonString);
+  }
 
   return {
     id: row.id,
+    publicId: row.public_id,
     title: row.title,
     ks3Folder,
     reportData,
@@ -260,7 +272,7 @@ async function deleteReport(reportId, userId) {
  */
 async function getReportForView(reportId, userId) {
   const result = await db.query(
-    'SELECT id, title, ks3_folder, is_public, creator_user_id FROM reports WHERE id = $1',
+    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE id = $1',
     [reportId]
   );
 
@@ -270,8 +282,28 @@ async function getReportForView(reportId, userId) {
     throw err;
   }
 
-  const report = result.rows[0];
+  return _mapReportForView(result.rows[0], userId);
+}
 
+/**
+ * Получить отчёт для просмотра по публичному идентификатору.
+ */
+async function getReportForViewByPublicId(publicId, userId) {
+  const result = await db.query(
+    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE public_id = $1',
+    [publicId]
+  );
+
+  if (result.rows.length === 0) {
+    const err = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  return _mapReportForView(result.rows[0], userId);
+}
+
+function _mapReportForView(report, userId) {
   // Проверка доступа
   if (!report.is_public && (!userId || userId !== report.creator_user_id)) {
     const err = new Error('Access denied');
@@ -281,43 +313,88 @@ async function getReportForView(reportId, userId) {
 
   return {
     id: report.id,
+    publicId: report.public_id,
     title: report.title,
     ks3Folder: report.ks3_folder,
     isPublic: report.is_public,
     creatorUserId: report.creator_user_id,
+    reportData: report.report_data,
   };
 }
 
 /**
  * Получить HTML отчёта.
  *
- * Скачивает report.json из KS3 и генерирует HTML на сервере
- * (без загрузки готового HTML с клиента).
+ * Читает JSON-данные из БД (или fallback на KS3 для старых отчётов),
+ * генерирует presigned URL для медиа и строит HTML на сервере.
  *
- * Пути к медиа сразу генерируются как proxy-пути с токеном:
- *   /view/report/:id/files/photos/f1.jpg?token=xxx
- * чтобы браузер запрашивал файлы через сервер (KS3-ключи скрыты).
- *
- * @param {string} ks3Folder - папка отчёта в KS3
- * @param {number} reportId - ID отчёта (для proxy-путей)
- * @param {string|null} token - JWT-токен (добавляется в URL для приватных отчётов)
- * @param {string} [baseUrl] - базовый URL сервера для абсолютных URL к фото
+ * @param {object} report - объект отчёта из getReportForView / getReport
+ * @param {string|null} token - JWT-токен (для fallback proxy-ссылок)
+ * @param {string} [baseUrl] - базовый URL сервера (устарело, сохранено для совместимости)
  * @returns {Promise<string>} HTML-контент
  */
-async function getReportHtml(ks3Folder, reportId, token, baseUrl) {
-  const jsonKey = `${ks3Folder}report.json`;
-  const fileData = await ks3.getFile(jsonKey);
-  const jsonString = fileData.data.toString('utf-8');
-  let reportData;
-  try {
-    reportData = JSON.parse(jsonString);
-  } catch (e) {
-    const err = new Error('Invalid report JSON: ' + e.message);
-    err.statusCode = 500;
+async function getReportHtml(report, token, baseUrl) {
+  let reportData = report.reportData;
+
+  // Fallback на KS3 для старых отчётов без report_data.
+  if (!reportData && report.ks3Folder) {
+    logger.info(`getReportHtml: report ${report.id} has no report_data, falling back to KS3`);
+    const jsonKey = `${report.ks3Folder}report.json`;
+    const fileData = await ks3.getFile(jsonKey);
+    const jsonString = fileData.data.toString('utf-8');
+    try {
+      reportData = JSON.parse(jsonString);
+    } catch (e) {
+      const err = new Error('Invalid report JSON: ' + e.message);
+      err.statusCode = 500;
+      throw err;
+    }
+  }
+
+  if (!reportData) {
+    const err = new Error('Report data not found');
+    err.statusCode = 404;
     throw err;
   }
-  logger.info(`getReportHtml: generated HTML from JSON for report ${reportId}`);
-  return generateReportHtml(reportData, reportId, token, baseUrl);
+
+  const mediaUrls = await getReportMediaUrls(report.id, 3600);
+  logger.info(`getReportHtml: generated HTML from DB JSON for report ${report.id}`);
+  return generateReportHtml(reportData, report.id, token, baseUrl, mediaUrls, report.ks3Folder);
+}
+
+/**
+ * Сгенерировать presigned URL для всех медиафайлов отчёта.
+ *
+ * Доступ к отчёту должен быть проверен вызывающей стороной ДО вызова.
+ *
+ * @param {number} reportId - ID отчёта
+ * @param {number} [expires=3600] - время жизни URL в секундах
+ * @returns {Promise<Object>} { 'photos/f1.jpg': { full, thumb }, ... }
+ */
+async function getReportMediaUrls(reportId, expires = 3600) {
+  const filesResult = await db.query(
+    `SELECT storage_key, relative_path, mime_type
+     FROM files
+     WHERE report_id = $1`,
+    [reportId]
+  );
+
+  const urls = {};
+  for (const file of filesResult.rows) {
+    try {
+      const full = await ks3.getPresignedUrl(file.storage_key, expires);
+      let thumb = full;
+      if (file.mime_type && file.mime_type.startsWith('image/')) {
+        const thumbKey = thumbnailService.getThumbnailStorageKey(file.storage_key);
+        thumb = await ks3.getPresignedUrl(thumbKey, expires);
+      }
+      urls[file.relative_path] = { full, thumb };
+    } catch (err) {
+      logger.warn(`getReportMediaUrls: failed to generate URL for ${file.storage_key}: ${err.message}`);
+    }
+  }
+
+  return urls;
 }
 
 /**
@@ -417,7 +494,9 @@ module.exports = {
   getReport,
   deleteReport,
   getReportForView,
+  getReportForViewByPublicId,
   getReportHtml,
+  getReportMediaUrls,
   getReportFile,
   getReportFileByKey,
   saveReportFile,

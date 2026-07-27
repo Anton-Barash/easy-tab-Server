@@ -2,10 +2,11 @@
 // Reports Controller — обработчики HTTP-запросов к /reports
 //
 // Эндпоинты:
-//   POST   /reports          — сохранить отчёт (создать/обновить)
-//   GET    /reports          — список отчётов пользователя
-//   GET    /reports/:id      — получить JSON отчёта
-//   DELETE /reports/:id      — удалить отчёт
+//   POST   /reports                — сохранить отчёт (создать/обновить)
+//   GET    /reports                — список отчётов пользователя
+//   GET    /reports/:id            — получить JSON отчёта
+//   DELETE /reports/:id            — удалить отчёт
+//   GET    /reports/:publicId/html — получить HTML отчёта
 //
 // Все эндпоинты требуют аутентификации (Bearer token).
 // ID пользователя берётся из request.user (requireAuth middleware).
@@ -131,14 +132,14 @@ async function deleteReport(request, reply) {
 }
 
 /**
- * GET /reports/:id/html
+ * GET /reports/:publicId/html
  * Получить HTML отчёта для отображения внутри Flutter (через iframe srcdoc).
  *
  * Сервер:
  *   1. Проверяет доступ (владелец / публичный)
- *   2. Скачивает report.json из KS3
- *   3. Генерирует HTML с АБСОЛЮТНЫМИ URL к фото (через baseUrl)
- *   4. Возвращает JSON { success, html }
+ *   2. Читает JSON-данные отчёта из БД
+ *   3. Генерирует presigned URL для медиафайлов
+ *   4. Генерирует HTML и возвращает JSON { success, html }
  *
  * Flutter вызывает этот эндпоинт, получает HTML-строку и
  * отображает её в iframe srcdoc (оставаясь на localhost:4000).
@@ -146,32 +147,24 @@ async function deleteReport(request, reply) {
  * Возвращает: { success: true, html: string }
  */
 async function getReportHtml(request, reply) {
-  const { id } = request.params;
-  const reportId = parseInt(id, 10);
+  const { publicId } = request.params;
 
-  if (isNaN(reportId) || reportId < 1) {
+  if (!publicId || publicId.length < 6) {
     return reply.status(400).send({ success: false, error: 'Invalid report id' });
   }
 
   try {
     const userId = request.user.userId;
-    const report = await reportsService.getReportForView(reportId, userId);
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
-    if (!report.ks3Folder) {
-      return reply.status(404).send({ success: false, error: 'Report files not found' });
-    }
-
-    // Для приватных отчётов: токен нужен для proxy-URL фото.
-    // Cookies не работают для кросс-оригинных запросов из iframe (localhost:4000 -> localhost:8000),
-    // поэтому передаём токен в URL.
+    // Для приватных отчётов: токен передаётся для fallback proxy-URL фото.
     const authHeader = request.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-    // Формируем baseUrl для абсолютных URL в HTML (чтобы iframe мог загрузить фото).
-    // В dev: http://localhost:8000, в prod: https://domain.com
+    // Абсолютный baseUrl сервера — используется только для fallback proxy-ссылок.
     const baseUrl = `${request.protocol}://${request.host}`;
 
-    const html = await reportsService.getReportHtml(report.ks3Folder, reportId, token, baseUrl);
+    const html = await reportsService.getReportHtml(report, token, baseUrl);
 
     return reply.send({ success: true, html });
   } catch (error) {

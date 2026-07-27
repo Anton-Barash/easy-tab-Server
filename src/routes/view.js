@@ -16,22 +16,22 @@ const { optionalAuth } = require('../middleware/authMiddleware');
 // ============================================================
 
 async function viewRoutes(fastify) {
-  // GET /view/report/:id — просмотр HTML отчёта
+  // GET /view/report/:publicId — просмотр HTML отчёта
   // Авторизация опциональна: для публичных отчётов не требуется
   // CSP убирается глобальным onSend hook в app.js (для всех /view/* URL)
-  fastify.get('/report/:id', {
+  fastify.get('/report/:publicId', {
     preHandler: optionalAuth,
     handler: viewController.viewReport,
   });
 
-  // GET /view/report/:id/files/* — проксирование файлов отчёта
-  fastify.get('/report/:id/files/*', {
+  // GET /view/report/:publicId/files/* — проксирование файлов отчёта
+  fastify.get('/report/:publicId/files/*', {
     preHandler: optionalAuth,
     handler: viewController.viewReportFile,
   });
 
-  // GET /view/report/:id/thumbnails/* — миниатюры изображений
-  fastify.get('/report/:id/thumbnails/*', {
+  // GET /view/report/:publicId/thumbnails/* — миниатюры изображений
+  fastify.get('/report/:publicId/thumbnails/*', {
     preHandler: optionalAuth,
     handler: viewController.viewReportThumbnail,
   });
