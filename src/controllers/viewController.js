@@ -22,6 +22,7 @@
 // ============================================================
 
 const reportsService = require('../services/reportsService');
+const { extractToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
 const path = require('path');
 
@@ -42,6 +43,13 @@ function normalizeKs3Path(p) {
  * для медиафайлов и строит HTML (без загрузки готового HTML с клиента).
  */
 async function viewReport(request, reply) {
+  // CORS и CORP заголовки для кросс-оригинных запросов из iframe.
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
+  reply.header('Vary', 'Origin');
+
   const { publicId } = request.params;
 
   if (!publicId || publicId.length < 6) {
@@ -55,8 +63,12 @@ async function viewReport(request, reply) {
     // Получаем отчёт с проверкой доступа (включает report_data)
     const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
-    // Генерируем HTML из JSON БД с presigned URL для медиа
-    const html = await reportsService.getReportHtml(report, null, null);
+    // Токен и baseUrl для proxy-ссылок на медиа (для приватных отчётов)
+    const token = extractToken(request);
+    const baseUrl = `${request.protocol}://${request.host}`;
+
+    // Генерируем HTML из JSON БД с proxy URL для медиа
+    const html = await reportsService.getReportHtml(report, token, baseUrl);
 
     logger.info(`viewReport: serving report ${report.publicId} (public=${report.isPublic})`);
 
@@ -82,26 +94,16 @@ async function viewReport(request, reply) {
  *      — нельзя получить файлы из другого отчёта
  */
 async function viewReportFile(request, reply) {
-  // CORS и CORP заголовки для кросс-оригинных запросов из iframe
-  // Добавляем в начало, чтобы возвращались даже при ошибках
-  // 
-  // about:srcdoc - origin для iframe с srcdoc (используется в Flutter Web)
-  // localhost:* - для разработки
-  // production - frontend и backend на одном домене
-  // null origin - iframe может не отправлять Origin header
-  // 
-  // Важно: Credentials не нужны, так как авторизация через token в URL query.
-  const origin = request.headers.origin;
-  const isLocalhost = origin && /^https?:\/\/localhost(:\d+)?$/.test(origin);
-  const isSrcdoc = origin === 'about:srcdoc';
-  const isNullOrigin = origin === null || origin === undefined;
-  
-  if (isLocalhost || isSrcdoc || isNullOrigin) {
-    reply.header('Access-Control-Allow-Origin', '*');
-    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
-    reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
-  }
+  // CORS и CORP заголовки для кросс-оригинных запросов из iframe.
+  // Возвращаем всегда: отчётные медиа могут встраиваться с любого origin
+  // (авторизация идёт через token в URL query, credentials не используются).
+  // Cross-Origin-Resource-Policy: cross-origin обязателен при
+  // Cross-Origin-Embedder-Policy: require-corp на странице-родителе.
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
+  reply.header('Vary', 'Origin');
 
   const { publicId } = request.params;
 
@@ -148,11 +150,29 @@ async function viewReportFile(request, reply) {
       return reply.status(404).send({ success: false, error: 'Report files not found' });
     }
 
+    // Поддержка HTTP Range для потокового воспроизведения видео.
+    const range = request.headers.range;
+    if (range) {
+      const file = await reportsService.getReportFileStream(report.ks3Folder, normalizedPath, range);
+      reply.status(file.status);
+      reply.header('Accept-Ranges', file.headers.acceptRanges || 'bytes');
+      if (file.headers.contentLength) {
+        reply.header('Content-Length', file.headers.contentLength);
+      }
+      if (file.headers.contentRange) {
+        reply.header('Content-Range', file.headers.contentRange);
+      }
+      reply.header('Cache-Control', 'public, max-age=3600');
+      logger.info(`viewReportFile: streaming ${normalizedPath} range=${range} for report ${report.publicId}`);
+      return reply.type(file.headers.contentType).send(file.stream);
+    }
+
     // Получаем файл из KS3 (только из папки этого отчёта)
     const file = await reportsService.getReportFile(report.ks3Folder, normalizedPath);
 
     // Кэшируем на 1 час (файлы отчётов редко меняются)
     reply.header('Cache-Control', 'public, max-age=3600');
+    reply.header('Accept-Ranges', 'bytes');
 
     logger.debug(`viewReportFile: serving ${normalizedPath} for report ${report.publicId}`);
 
@@ -168,17 +188,11 @@ async function viewReportFile(request, reply) {
 }
 
 async function viewReportThumbnail(request, reply) {
-  const origin = request.headers.origin;
-  const isLocalhost = origin && /^https?:\/\/localhost(:\d+)?$/.test(origin);
-  const isSrcdoc = origin === 'about:srcdoc';
-  const isNullOrigin = origin === null || origin === undefined;
-  
-  if (isLocalhost || isSrcdoc || isNullOrigin) {
-    reply.header('Access-Control-Allow-Origin', '*');
-    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
-    reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
-    reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
-  }
+  reply.header('Access-Control-Allow-Origin', '*');
+  reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
+  reply.header('Access-Control-Expose-Headers', 'Cross-Origin-Resource-Policy, Cross-Origin-Embedder-Policy');
+  reply.header('Vary', 'Origin');
 
   const { publicId } = request.params;
 

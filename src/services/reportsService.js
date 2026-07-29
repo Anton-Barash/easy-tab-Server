@@ -359,7 +359,7 @@ async function getReportHtml(report, token, baseUrl) {
 
   const mediaUrls = await getReportMediaUrls(report.id, 3600);
   logger.info(`getReportHtml: generated HTML from DB JSON for report ${report.id}`);
-  return generateReportHtml(reportData, report.id, token, baseUrl, mediaUrls, report.ks3Folder);
+  return generateReportHtml(reportData, report.publicId, token, baseUrl, mediaUrls, report.ks3Folder);
 }
 
 /**
@@ -440,6 +440,20 @@ async function getReportFile(ks3Folder, relativePath) {
   };
 }
 
+/**
+ * Получить поток файла из KS3 для проксирования с поддержкой Range.
+ *
+ * @param {string} ks3Folder - папка отчёта в KS3
+ * @param {string} relativePath - относительный путь файла
+ * @param {string|null} range - HTTP Range header
+ * @returns {Promise<{stream: Readable, status: number, headers: object}>}
+ */
+async function getReportFileStream(ks3Folder, relativePath, range = null) {
+  const fileKey = `${ks3Folder}${relativePath}`;
+  logger.info(`getReportFileStream: ks3Folder="${ks3Folder}", relativePath="${relativePath}", range="${range || 'none'}"`);
+  return ks3.getFileStream(fileKey, range);
+}
+
 async function getReportFileByKey(storageKey) {
   try {
     const fileData = await ks3.getFile(storageKey);
@@ -498,6 +512,7 @@ module.exports = {
   getReportHtml,
   getReportMediaUrls,
   getReportFile,
+  getReportFileStream,
   getReportFileByKey,
   saveReportFile,
 };

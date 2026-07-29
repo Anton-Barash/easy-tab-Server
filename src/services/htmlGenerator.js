@@ -163,31 +163,34 @@ function getQuestionDisplayName(question, langCode, questionIndex) {
  * Сгенерировать HTML-отчёт из JSON данных.
  *
  * @param {object} reportData - JSON-объект отчёта (Report.toJson())
- * @param {number} reportId - ID отчёта (для формирования fallback proxy-путей)
+ * @param {string} publicId - публичный ID отчёта (для формирования fallback proxy-путей)
  * @param {string|null} token - JWT-токен (добавляется в URL fallback proxy для приватных отчётов)
  * @param {string} [baseUrl] - базовый URL сервера для абсолютных fallback URL
  * @param {Object} [mediaUrls] - { 'photos/f1.jpg': { full, thumb }, ... } presigned URL из KS3
  * @param {string} [ks3Folder] - папка отчёта в KS3 (не используется напрямую, оставлена для совместимости)
  * @returns {string} HTML-страница
  */
-function generateReportHtml(reportData, reportId, token, baseUrl, mediaUrls, ks3Folder) {
+function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3Folder) {
   if (!reportData) {
     return '<html><body>Нет отчёта</body></html>';
   }
 
-  // Формирует presigned/full URL для медиа. Если готового URL нет — fallback на proxy.
+  // Используем серверный прокси для всех медиа, чтобы избежать
+  // COEP/CORS-проблем с прямыми presigned URL из KS3 внутри iframe.
   const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
   function resolveMediaUrls(localPath, mediaName) {
-    const key = localPath || mediaName;
-    if (mediaUrls && mediaUrls[key]) {
-      return mediaUrls[key];
-    }
     const proxyBase = baseUrl
-      ? `${baseUrl}/view/report/${reportId}`
-      : `/view/report/${reportId}`;
+      ? `${baseUrl}/view/report/${publicId}`
+      : `/view/report/${publicId}`;
     const full = `${proxyBase}/files/${localPath}${tokenSuffix}`;
     const thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}`;
     return { full, thumb };
+  }
+
+  // P3-54: в HTML включаем только медиа, которые реально загружены на сервер.
+  // mediaUrls строится по файлам из БД, поэтому отсутствие URL = файл не загрузился.
+  function hasMedia(localPath) {
+    return !!(mediaUrls && mediaUrls[localPath] && mediaUrls[localPath].full);
   }
 
   const reportName = escapeHtml(reportData.reportName ?? '');
@@ -195,9 +198,9 @@ function generateReportHtml(reportData, reportId, token, baseUrl, mediaUrls, ks3
   const allLanguages = reportData.availableLanguages ?? [];
   const languages = sortLanguages(allLanguages);
 
-  // Собираем медиа по вопросам/ответам/языкам (как в _generateHtml)
+  // Собираем медиа по вопросам/ответам/языкам (как в _generateHtml).
+  // P3-54: пропускаем медиа, которые не загрузились на сервер.
   const allMediaByQandAandLang = [];
-  const allImagePaths = [];
 
   for (let i = 0; i < (reportData.questions ?? []).length; i++) {
     const questionMedia = [];
@@ -206,12 +209,8 @@ function generateReportHtml(reportData, reportId, token, baseUrl, mediaUrls, ks3
       const answers = getAnswersForQuestion(reportData, i, lang);
       const langMedia = [];
       for (const a of answers) {
-        langMedia.push(a.media);
-        for (const m of a.media) {
-          if (m.type.startsWith('image') && !allImagePaths.includes(m.localPath)) {
-            allImagePaths.push(m.localPath);
-          }
-        }
+        const filteredMedia = a.media.filter((m) => hasMedia(m.localPath));
+        langMedia.push(filteredMedia);
       }
       questionMedia.push(langMedia);
     }

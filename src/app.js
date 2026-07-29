@@ -15,6 +15,7 @@ const helmet = require('@fastify/helmet');
 const rateLimit = require('@fastify/rate-limit');
 const multipart = require('@fastify/multipart');
 const cookie = require('@fastify/cookie');
+const compress = require('@fastify/compress');
 const path = require('path');
 const config = require('./config');
 const errorHandler = require('./middleware/errorHandler');
@@ -71,23 +72,28 @@ function buildApp() {
       directives: {
         defaultSrc: ["'self'", 'https://*.gstatic.com'],
         imgSrc: ["'self'", 'data:', 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://*.gstatic.com'],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://*.gstatic.com', 'https://unpkg.com'],
         scriptSrcAttr: ["'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         styleSrcAttr: ["'unsafe-inline'"],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
         frameAncestors: ["'none'"],
-        workerSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
-        childSrc: ["'self'", 'blob:', 'https://*.gstatic.com'],
+        workerSrc: ["'self'", 'blob:', 'https://*.gstatic.com', 'https://unpkg.com'],
+        childSrc: ["'self'", 'blob:', 'https://*.gstatic.com', 'https://unpkg.com'],
         fontSrc: ["'self'", 'data:', 'https://*.gstatic.com'],
-        connectSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
-        mediaSrc: ["'self'", 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com'],
+        connectSrc: ["'self'", 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com', 'https://unpkg.com'],
+        mediaSrc: ["'self'", 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com', 'https://unpkg.com'],
         manifestSrc: ["'self'"],
       },
     },
-    crossOriginResourcePolicy: false,
-    crossOriginOpenerPolicy: false,
+    // CORP: cross-origin — разрешаем встраивание ресурсов сервера
+    // (включая статику ffmpeg.wasm и медиа из /view) при COEP: require-corp.
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // Требуется для ffmpeg.wasm (SharedArrayBuffer):
+    // Cross-Origin-Opener-Policy + Cross-Origin-Embedder-Policy.
+    crossOriginOpenerPolicy: { policy: 'same-origin' },
+    crossOriginEmbedderPolicy: { policy: 'require-corp' },
     hsts: config.env === 'production',
   });
 
@@ -98,6 +104,14 @@ function buildApp() {
     timeWindow: '1 minute',
     // Исключаем healthcheck из глобального лимита
     whitelist: (req) => req.url === '/health' || req.url === '/',
+  });
+
+  // P3-53: Сжатие ответов (gzip/deflate/brotli). Особенно важно для WASM/JS статики.
+  app.register(compress, {
+    global: true,
+    encodings: ['br', 'gzip', 'deflate'],
+    // Не сжимаем уже сжатые форматы и range-запросы видео.
+    customTypes: /^text\/|application\/javascript|application\/wasm|application\/json|image\/svg/,
   });
 
   // Регистрация CORS с whitelist
@@ -139,8 +153,19 @@ function buildApp() {
     root: path.join(__dirname, '../web'),
     prefix: '/',
     schemaHide: true,
-    wildcard: false,
-});
+    wildcard: true,
+    // P3-51: явно проставляем CORP/CORS для статических файлов.
+    // Нужно для ffmpeg.wasm и других ресурсов при COEP: require-corp.
+    // P3-53: длительное кэширование статики (имена файлов Flutter содержат hash).
+    setHeaders: (reply, path) => {
+      reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+      reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
+      reply.header('Access-Control-Allow-Origin', '*');
+      if (path.includes('assets/ffmpeg/')) {
+        reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  });
 
 app.setNotFoundHandler({ prefix: '/' }, (request, reply) => {
     const accept = request.headers.accept || '';

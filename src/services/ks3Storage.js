@@ -16,6 +16,7 @@ const KS3 = require('ks3');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { Readable } = require('stream');
 const logger = require('../utils/logger');
 
 // ------------------------------------------------------------
@@ -85,31 +86,81 @@ function getRegion() {
  * @returns {Promise<object>} информация о загруженном файле
  */
 async function saveFile(key, body, mimeType = 'application/octet-stream') {
+  // P3-49: storage_key (path в бакете) не логируем на info — только на debug.
+  logger.info(`KS3 upload: ${body.length} bytes, ${mimeType}`);
+  logger.debug(`KS3 upload key: ${key}`);
+
+  // P3-53: Retry-логика для временных сетевых ошибок (ECONNRESET, ENOTFOUND, timeout).
+  // KS3 из некоторых регионов нестабилен — наблюдались ECONNRESET через ~100s
+  // и ENOTFOUND при DNS-сбоях. Повторяем до 3 раз с нарастающей задержкой.
+  const maxRetries = 3;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const result = await _saveFileOnce(key, body, mimeType);
+      return result;
+    } catch (error) {
+      lastError = error;
+      const errCode = error && error.code;
+      const errMsg = error && error.message ? error.message : String(error);
+      const isRetryable =
+        errCode === 'ECONNRESET' ||
+        errCode === 'ENOTFOUND' ||
+        errCode === 'ETIMEDOUT' ||
+        errMsg.includes('timeout');
+
+      if (isRetryable && attempt < maxRetries) {
+        const delayMs = attempt * 2000;
+        logger.warn(`KS3 upload failed (attempt ${attempt}/${maxRetries}), retrying in ${delayMs}ms: ${errMsg}`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      logger.error(`Failed to upload to KS3 after ${attempt} attempt(s): ${errMsg}`);
+      throw error;
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * Одна попытка загрузки файла в KS3.
+ * Создаёт временный файл, загружает через SDK, удаляет временный файл.
+ */
+async function _saveFileOnce(key, body, mimeType) {
   let tmpFile = null;
   try {
-    // P3-49: storage_key (path в бакете) не логируем на info — только на debug.
-    logger.info(`KS3 upload: ${body.length} bytes, ${mimeType}`);
-    logger.debug(`KS3 upload key: ${key}`);
-
     // KS3 SDK копирует Buffer в память при вычислении CRC64 (WebAssembly),
     // что приводит к OOM для файлов > ~15 MB. Сохраняем тело во временный файл
     // и передаём путь — SDK тогда использует поток и считает CRC по чанкам.
     tmpFile = path.join(os.tmpdir(), `ks3-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     await fs.promises.writeFile(tmpFile, body);
 
-    await new Promise((resolve, reject) => {
+    const uploadPromise = new Promise((resolve, reject) => {
+      logger.info(`KS3 upload starting for key: ${key}`);
       client.object.put(
         {
           Bucket: KS3_CONFIG.bucket,
           Key: key,
           FilePath: tmpFile,
-          // Передаём MIME-тип — KS3 сохранит его в Content-Type объекта.
-          // Для HTML это обеспечит отображение в браузере по подписанной ссылке.
           ContentType: mimeType,
         },
         (err, data, response) => {
+          logger.info(`KS3 upload callback received for key: ${key}, err=${!!err}`);
           if (err) {
-            logger.error(`KS3 upload error: ${err}`);
+            const util = require('util');
+            const errInfo = {
+              message: err && err.message ? err.message : 'unknown',
+              code: err && err.code ? err.code : null,
+              statusCode: err && err.statusCode ? err.statusCode : (response && response.statusCode),
+              body: err && err.body ? String(err.body).substring(0, 500) : null,
+              requestId: err && err.requestId ? err.requestId : (response && response.headers && response.headers['x-kss-request-id']),
+              allKeys: Object.keys(err),
+              fullError: util.inspect(err, { depth: 3, showHidden: true }),
+            };
+            logger.error(`KS3 upload error for key "${key}": ${JSON.stringify(errInfo)}`);
             reject(err);
           } else {
             logger.debug(`KS3 upload success: ${key}`);
@@ -119,6 +170,22 @@ async function saveFile(key, body, mimeType = 'application/octet-stream') {
       );
     });
 
+    // P3-50: KS3 из некоторых регионов загружает большие файлы медленно
+    // (наблюдалось ~80s для 9.5 MB). Таймаут вычисляем по размеру:
+    // минимум 120s + 1s на каждые 100 KB, но не менее 300s для файлов > 5 MB.
+    const sizeBasedTimeout = Math.max(120000, Math.ceil(body.length / 100000) * 1000);
+    const uploadTimeout = body.length > 5 * 1024 * 1024 ? 300000 : sizeBasedTimeout;
+
+    logger.info(`KS3 upload timeout set to ${uploadTimeout}ms for key: ${key}`);
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`KS3 upload timeout after ${uploadTimeout}ms for key ${key}`));
+      }, uploadTimeout);
+    });
+
+    await Promise.race([uploadPromise, timeoutPromise]);
+
     return {
       key,
       bucket: KS3_CONFIG.bucket,
@@ -126,9 +193,6 @@ async function saveFile(key, body, mimeType = 'application/octet-stream') {
       size: body.length,
       mimeType,
     };
-  } catch (error) {
-    logger.error(`Failed to upload to KS3: ${error.message}`);
-    throw error;
   } finally {
     if (tmpFile) {
       try {
@@ -179,6 +243,54 @@ async function getFile(key) {
     return { key, data };
   } catch (error) {
     logger.error(`Failed to download from KS3: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Получить поток файла из KS3 с поддержкой Range-запросов.
+ *
+ * Использует presigned URL + fetch(), чтобы браузер мог запрашивать
+ * видео по частям (HTTP Range) через наш прокси.
+ *
+ * @param {string} key - ключ объекта в KS3
+ * @param {string|null} range - HTTP Range header, например "bytes=0-1048575"
+ * @returns {Promise<{stream: Readable, status: number, headers: object}>}
+ */
+async function getFileStream(key, range = null) {
+  try {
+    logger.info(`KS3 download stream: range=${range || 'none'}`);
+    logger.debug(`KS3 download stream key: ${key}`);
+
+    const url = await getPresignedUrl(key, 300);
+    const fetchHeaders = {};
+    if (range) {
+      fetchHeaders.Range = range;
+    }
+
+    const response = await fetch(url, { headers: fetchHeaders });
+    if (!response.ok && response.status !== 206) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`KS3 stream error: ${response.status} ${response.statusText} ${body.substring(0, 200)}`);
+    }
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const contentLength = response.headers.get('content-length');
+    const contentRange = response.headers.get('content-range');
+    const acceptRanges = response.headers.get('accept-ranges');
+
+    return {
+      stream: Readable.fromWeb(response.body),
+      status: response.status,
+      headers: {
+        contentType,
+        contentLength,
+        contentRange,
+        acceptRanges,
+      },
+    };
+  } catch (error) {
+    logger.error(`Failed to stream from KS3: ${error.message}`);
     throw error;
   }
 }
@@ -341,6 +453,7 @@ async function checkBucket() {
 module.exports = {
   saveFile,
   getFile,
+  getFileStream,
   getPresignedUrl,
   deleteFile,
   checkBucket,
