@@ -57,6 +57,18 @@ function buildApp() {
   errorHandler(app);
   requestLogger(app);
 
+  // P3-54: DELETE-запросы в этом API никогда не имеют тела.
+  // Если клиент (включая устаревшую сборку Flutter web) пришлёт
+  // Content-Type: application/json с пустым телом, Fastify вернёт 400
+  // ("Body cannot be empty when content-type is set to 'application/json'").
+  // Снимаем Content-Type у DELETE — парсер не пытается разбирать пустое тело.
+  app.addHook('onRequest', (request, reply, done) => {
+    if (request.method === 'DELETE' && request.headers['content-type']) {
+      delete request.headers['content-type'];
+    }
+    done();
+  });
+
   // Регистрация cookie плагина для чтения auth_token cookie
   app.register(cookie, {
     secret: process.env.JWT_SECRET || 'default-secret', // для подписанных cookie (не используется, но требуется)
@@ -168,6 +180,18 @@ function buildApp() {
   });
 
 app.setNotFoundHandler({ prefix: '/' }, (request, reply) => {
+    const url = request.url;
+    
+    // Отдаём video-compress.html для URL без расширения
+    if (url === '/video-compress') {
+        reply
+            .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            .header('Pragma', 'no-cache')
+            .type('text/html')
+            .sendFile('video-compress.html', path.join(__dirname, '../web'));
+        return;
+    }
+    
     const accept = request.headers.accept || '';
     if (accept.includes('text/html')) {
         reply.sendFile('index.html', path.join(__dirname, '../web'));

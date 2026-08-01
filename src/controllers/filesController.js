@@ -411,8 +411,118 @@ async function listMyFiles(request, reply) {
   });
 }
 
+// ------------------------------------------------------------
+// POST /files/presign-upload
+// Получить presigned PUT URL для прямой загрузки в KS3
+// ------------------------------------------------------------
+
+/**
+ * Подготовить presigned URL для прямой загрузки файла из браузера в KS3.
+ *
+ * Ожидает JSON: { fileName, relativePath?, reportId? }
+ * Возвращает: { success, uploadUrl, fileId, storageKey, mimeType, relPath }
+ */
+async function presignUpload(request, reply) {
+  const { fileName, relativePath, reportId } = request.body || {};
+
+  if (!fileName) {
+    return reply.status(400).send({ success: false, error: 'fileName is required' });
+  }
+
+  try {
+    const result = await fileService.presignUpload({
+      userId: request.user.userId,
+      originalName: fileName,
+      relativePath: relativePath || null,
+      reportId: reportId ? parseInt(reportId, 10) : null,
+    });
+
+    return reply.send({
+      success: true,
+      uploadUrl: result.uploadUrl,
+      fileId: result.fileId,
+      storageKey: result.storageKey,
+      mimeType: result.mimeType,
+      relPath: result.relPath,
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate upload URL' : error.message,
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /files/confirm-upload
+// Подтвердить прямую загрузку файла — создать запись в БД
+// ------------------------------------------------------------
+
+/**
+ * Подтвердить загрузку файла в KS3 и создать запись в БД.
+ *
+ * Ожидает JSON: { fileId, storageKey, fileName, size, mimeType, relPath, reportId?, parentId? }
+ * Возвращает: { success, file: { id, ... } }
+ */
+async function confirmUpload(request, reply) {
+  const body = request.body || {};
+  const { fileId, storageKey, fileName, size, mimeType, relPath, reportId, parentId } = body;
+
+  // Диагностика: логируем что пришло
+  const logger = require('../utils/logger');
+  logger.info(`confirmUpload: body=${JSON.stringify(body).substring(0, 500)}`);
+
+  if (!fileId || !storageKey || !fileName || !size) {
+    const missing = [
+      !fileId ? 'fileId' : null,
+      !storageKey ? 'storageKey' : null,
+      !fileName ? 'fileName' : null,
+      !size ? 'size' : null,
+    ].filter(Boolean);
+    logger.warn(`confirmUpload: missing fields: ${missing.join(', ')}`);
+    return reply.status(400).send({ success: false, error: `Missing: ${missing.join(', ')}` });
+  }
+
+  try {
+    const file = await fileService.confirmUpload({
+      userId: request.user.userId,
+      fileId,
+      storageKey,
+      originalName: fileName,
+      size: parseInt(size, 10),
+      mimeType,
+      relPath,
+      reportId: reportId ? parseInt(reportId, 10) : null,
+      parentId: parentId || null,
+    });
+
+    return reply.status(201).send({
+      success: true,
+      file: {
+        id: file.id,
+        originalName: file.original_name,
+        size: file.size,
+        mimeType: file.mime_type,
+        relativePath: file.relative_path,
+        isInline: file.is_inline,
+        reportId: file.report_id,
+        createdAt: file.created_at,
+      },
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to confirm upload' : error.message,
+    });
+  }
+}
+
 module.exports = {
   uploadFile,
+  presignUpload,
+  confirmUpload,
   getFile,
   downloadFile,
   grantPermission,

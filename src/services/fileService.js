@@ -211,6 +211,133 @@ async function uploadFile({ userId, originalName, body, relativePath, parentId, 
 }
 
 // ------------------------------------------------------------
+// Presigned upload — прямая загрузка из браузера в KS3
+// ------------------------------------------------------------
+
+/**
+ * Подготовить presigned PUT URL для прямой загрузки файла в KS3.
+ *
+ * Шаги:
+ *   1. Проверка reportId и ks3_folder (как в uploadFile)
+ *   2. Генерация UUID и storage_key
+ *   3. Генерация presigned PUT URL
+ *   4. Возврат URL + метаданных (без записи в БД — она в confirmUpload)
+ *
+ * @param {object} params
+ * @param {number} params.userId - ID пользователя (из JWT)
+ * @param {string} params.originalName - оригинальное имя файла
+ * @param {string} [params.relativePath] - относительный путь в папке отчёта
+ * @param {number|null} [params.reportId] - ID отчёта
+ * @returns {Promise<object>} { uploadUrl, fileId, storageKey, mimeType, relPath }
+ */
+async function presignUpload({ userId, originalName, relativePath, reportId }) {
+  let ks3Folder = null;
+  let safeRelativePath = null;
+
+  if (reportId) {
+    const reportResult = await db.query(
+      'SELECT ks3_folder FROM reports WHERE id = $1 AND creator_user_id = $2',
+      [reportId, userId]
+    );
+    if (reportResult.rows.length === 0) {
+      const err = new Error('Report not found or access denied');
+      err.statusCode = 403;
+      throw err;
+    }
+    ks3Folder = reportResult.rows[0].ks3_folder || null;
+    if (ks3Folder) {
+      safeRelativePath = relativePath ? sanitizeRelativePath(relativePath) : null;
+      if (relativePath && !safeRelativePath) {
+        const err = new Error('Invalid relativePath: path traversal detected');
+        err.statusCode = 400;
+        throw err;
+      }
+    }
+  }
+
+  const uuid = generateUuid();
+  const safeName = sanitizeFilename(originalName);
+
+  let storageKey;
+  let relPath;
+  if (ks3Folder && safeRelativePath) {
+    storageKey = `${ks3Folder}${safeRelativePath}`;
+    relPath = safeRelativePath;
+  } else if (ks3Folder && !relativePath) {
+    storageKey = `${ks3Folder}${safeName}`;
+    relPath = safeName;
+  } else {
+    storageKey = buildStorageKey(uuid, originalName);
+    relPath = safeName;
+  }
+
+  const mimeType = getMimeType(originalName);
+  const uploadUrl = await ks3.getPresignedUploadUrl(storageKey);
+
+  logger.info(`presignUpload: user=${userId}, name=${originalName}, mime=${mimeType}, reportId=${reportId || 'null'}`);
+
+  return { uploadUrl, fileId: uuid, storageKey, mimeType, relPath };
+}
+
+/**
+ * Подтвердить прямую загрузку файла в KS3 — создать запись в БД.
+ *
+ * Вызывается браузером после успешного PUT по presigned URL.
+ *
+ * @param {object} params
+ * @param {number} params.userId - ID пользователя (из JWT)
+ * @param {string} params.fileId - UUID файла (из presignUpload)
+ * @param {string} params.storageKey - ключ в KS3 (из presignUpload)
+ * @param {string} params.originalName - оригинальное имя
+ * @param {number} params.size - размер файла в байтах
+ * @param {string} params.mimeType - MIME-тип
+ * @param {string} params.relPath - относительный путь
+ * @param {number|null} [params.reportId] - ID отчёта
+ * @param {string|null} [params.parentId] - UUID родителя
+ * @returns {Promise<object>} запись о файле
+ */
+async function confirmUpload({ userId, fileId, storageKey, originalName, size, mimeType, relPath, reportId, parentId }) {
+  const inline = isInlineFile(originalName, mimeType);
+
+  logger.info(`confirmUpload: user=${userId}, file=${fileId}, name=${originalName}, size=${size}, reportId=${reportId || 'null'}`);
+
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const result = await dbClient.query(
+      `INSERT INTO files
+         (id, owner_id, storage_key, original_name, size, mime_type, relative_path, parent_id, is_inline, report_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [fileId, userId, storageKey, originalName, size, mimeType, relPath, parentId || null, inline, reportId || null]
+    );
+    const fileRecord = result.rows[0];
+
+    await dbClient.query(
+      `INSERT INTO file_permissions (file_id, user_id, permission, granted_by)
+       VALUES ($1, $2, 'owner', $2)`,
+      [fileId, userId]
+    );
+
+    await dbClient.query('COMMIT');
+    logger.info(`confirmUpload: created file ${fileId} for user ${userId}`);
+    return fileRecord;
+  } catch (dbErr) {
+    await dbClient.query('ROLLBACK');
+    // Компенсация: удаляем объект из KS3, если БД-операция упала
+    try {
+      await ks3.deleteFile(storageKey);
+      logger.warn(`confirmUpload: DB insert failed, KS3 object deleted (compensation)`);
+    } catch (ks3Err) {
+      logger.error(`confirmUpload: KS3 compensation delete failed: ${ks3Err.message}`);
+    }
+    throw dbErr;
+  } finally {
+    dbClient.release();
+  }
+}
+
+// ------------------------------------------------------------
 // Список файлов отчёта
 // ------------------------------------------------------------
 
@@ -540,8 +667,16 @@ async function deleteFile(fileId, userId) {
   // 2. Удаляем запись из files
   await db.query('DELETE FROM files WHERE id = $1', [fileId]);
 
-  // 3. Удаляем объект из KS3
-  await ks3.deleteFile(file.storage_key);
+  // 3. Удаляем объект из KS3.
+  // Non-fatal: если KS3-удаление не удалось, файл уже недоступен через БД.
+  // Логируем storage_key и ошибку для диагностики.
+  try {
+    logger.info(`deleteFile: deleting from KS3, key=${file.storage_key}`);
+    await ks3.deleteFile(file.storage_key);
+    logger.info(`deleteFile: KS3 object deleted for ${fileId}`);
+  } catch (ks3Err) {
+    logger.error(`deleteFile: DB record deleted, but KS3 delete FAILED for ${fileId}, key=${file.storage_key}, error=${ks3Err.message}`);
+  }
 
   logger.info(`deleteFile: ${fileId} by user ${userId}`);
   return true;
@@ -577,6 +712,8 @@ async function listUserFiles(userId) {
 
 module.exports = {
   uploadFile,
+  presignUpload,
+  confirmUpload,
   getFileById,
   hasPermission,
   isOwner,

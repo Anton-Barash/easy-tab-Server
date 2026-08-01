@@ -27,9 +27,17 @@ async function filesRoutes(fastify) {
   // Основные эндпоинты (требуют аутентификацию)
   // --------------------------------------------------------
 
-  // Загрузка файла (multipart/form-data)
+  // Загрузка файла (multipart/form-data) — серверная загрузка (fallback)
   // Body: file + relativePath (опционально) + reportId (опционально)
   fastify.post('/upload', { preHandler: requireAuth }, filesController.uploadFile);
+
+  // Presigned PUT URL для прямой загрузки в KS3 из браузера
+  // Body JSON: { fileName, relativePath?, reportId? }
+  fastify.post('/presign-upload', { preHandler: requireAuth }, filesController.presignUpload);
+
+  // Подтверждение прямой загрузки — создать запись в БД
+  // Body JSON: { fileId, storageKey, fileName, size, mimeType, relPath, reportId?, parentId? }
+  fastify.post('/confirm-upload', { preHandler: requireAuth }, filesController.confirmUpload);
 
   // Список всех файлов пользователя (владелец + выданные права)
   fastify.get('/', { preHandler: requireAuth }, filesController.listMyFiles);

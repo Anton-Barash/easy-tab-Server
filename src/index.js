@@ -2,6 +2,7 @@ const buildApp = require('./app');
 const config = require('./config');
 const { runMigrations } = require('./db/migrationRunner');
 const { closePool } = require('./services/databaseService');
+const ks3 = require('./services/ks3Storage');
 
 // P1-18: валидация конфигурации при старте (production: обязательные переменные).
 config.validateConfig(config);
@@ -24,6 +25,10 @@ async function start() {
   try {
     // Run database migrations on startup
     await runMigrations();
+
+    // Настройка CORS на бакете KS3 для прямой загрузки из браузера.
+    // Non-fatal: если не удалось — продолжаем (fallback на серверную загрузку).
+    await ks3.ensureBucketCors();
 
     await app.listen({ port: config.port, host: config.host });
     app.log.info(`Server running on ${config.host}:${config.port} [${config.env}]`);

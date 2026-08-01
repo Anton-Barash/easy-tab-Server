@@ -76,6 +76,48 @@ function getRegion() {
   return KS3_CONFIG.region;
 }
 
+// ------------------------------------------------------------
+// Внутренняя утилита: обёрнуть callback-style вызов KS3 SDK в Promise.
+//
+// До рефакторинга один и тот же шаблон
+//   new Promise((resolve, reject) => client.X.method(params, (err, data) => {...}))
+// дублировался в getFile/getPresignedUrl/listFiles/deleteFile/checkBucket.
+// Универсальная обёртка убирает дублирование и единообразно логирует ошибки.
+//
+// Не применяется в _saveFileOnce: там особая диагностика ошибок
+// (allKeys/fullError inspect) и таймаут через Promise.race — это намеренно.
+// ------------------------------------------------------------
+
+/**
+ * Вызвать callback-style метод KS3 SDK и вернуть Promise.
+ *
+ * @param {string} label - человекочитаемая метка для логов (например 'download')
+ * @param {(cb: function) => void} invoke - функция, принимающая node-callback
+ *        и выполняющая вызов SDK (например cb => client.object.get(params, cb))
+ * @returns {Promise<*>} данные, возвращённые SDK
+ */
+function _ks3Callback(label, invoke) {
+  return new Promise((resolve, reject) => {
+    invoke((err, data) => {
+      if (err) {
+        // Расширенная диагностика: KS3 возвращает code/statusCode/body(XML).
+        // Раньше это логирование было только в getFile, теперь единообразно
+        // во всех callback-вызовах — улучшает отладку delete/list/presigned URL.
+        const errInfo = {
+          message: err && err.message ? err.message : 'unknown',
+          code: err && err.code ? err.code : null,
+          statusCode: err && err.statusCode ? err.statusCode : null,
+          body: err && err.body ? String(err.body).substring(0, 200) : null,
+        };
+        logger.error(`KS3 ${label} error: ${JSON.stringify(errInfo)}`);
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+}
+
 /**
  * Загрузить файл в KS3.
  *
@@ -217,28 +259,9 @@ async function getFile(key) {
     logger.info('KS3 download');
     logger.debug(`KS3 download key: ${key}`);
 
-    const data = await new Promise((resolve, reject) => {
-      client.object.get(
-        {
-          Bucket: KS3_CONFIG.bucket,
-          Key: key,
-        },
-        (err, data, response) => {
-          if (err) {
-            const errInfo = {
-              message: err && err.message ? err.message : 'unknown',
-              code: err && err.code ? err.code : null,
-              statusCode: err && err.statusCode ? err.statusCode : (response && response.statusCode),
-              body: err && err.body ? String(err.body).substring(0, 200) : null,
-            };
-            logger.error(`KS3 download error for key "${key}": ${JSON.stringify(errInfo)}`);
-            reject(err);
-          } else {
-            resolve(data);
-          }
-        }
-      );
-    });
+    const data = await _ks3Callback('download', (cb) =>
+      client.object.get({ Bucket: KS3_CONFIG.bucket, Key: key }, cb)
+    );
 
     return { key, data };
   } catch (error) {
@@ -315,25 +338,15 @@ async function getPresignedUrl(key, expires = 3600) {
     logger.info(`KS3 presigned URL (expires in ${expires}s)`);
     logger.debug(`KS3 presigned URL key: ${key}`);
 
-    const url = await new Promise((resolve, reject) => {
+    const url = await _ks3Callback('presigned URL', (cb) =>
       client.object.generatePresignedUrl(
-        {
-          Bucket: KS3_CONFIG.bucket,
-          Key: key,
-          Expires: expires,
-        },
-        (err, data, response) => {
-          if (err) {
-            logger.error(`KS3 presigned URL error: ${err}`);
-            reject(err);
-          } else {
-            resolve(data);
-          }
-        }
-      );
-    });
+        { Bucket: KS3_CONFIG.bucket, Key: key, Expires: expires },
+        cb
+      )
+    );
 
-    return url;
+    // KS3 SDK генерирует http:// URL, но CSP требует https://
+    return url ? url.replace(/^http:\/\//, 'https://') : url;
   } catch (error) {
     logger.error(`Failed to generate presigned URL: ${error.message}`);
     throw error;
@@ -350,21 +363,9 @@ async function listFiles() {
   try {
     logger.info('KS3 list objects');
 
-    const data = await new Promise((resolve, reject) => {
-      client.bucket.get(
-        {
-          Bucket: KS3_CONFIG.bucket,
-        },
-        (err, data, response) => {
-          if (err) {
-            logger.error(`KS3 list error: ${err}`);
-            reject(err);
-          } else {
-            resolve(data);
-          }
-        }
-      );
-    });
+    const data = await _ks3Callback('list', (cb) =>
+      client.bucket.get({ Bucket: KS3_CONFIG.bucket }, cb)
+    );
 
     // Парсим XML-ответ KS3 SDK
     const files = data.Contents || [];
@@ -392,22 +393,14 @@ async function deleteFile(key) {
     logger.info('KS3 delete');
     logger.debug(`KS3 delete key: ${key}`);
 
-    await new Promise((resolve, reject) => {
-      client.object.delete(
-        {
-          Bucket: KS3_CONFIG.bucket,
-          Key: key,
-        },
-        (err, data, response) => {
-          if (err) {
-            logger.error(`KS3 delete error: ${err}`);
-            reject(err);
-          } else {
-            resolve(data);
-          }
-        }
-      );
-    });
+    // P3-55: KS3 SDK экспортирует метод удаления как `del`, а НЕ `delete`
+    // (см. node_modules/ks3/lib/api/object.js: `del: del`).
+    // Раньше здесь вызывался несуществующий client.object.delete —
+    // удаление из KS3 молча падало (non-fatal в fileService), и все
+    // "удалённые" файлы оставались в бакете навсегда (orphan objects).
+    await _ks3Callback('delete', (cb) =>
+      client.object.del({ Bucket: KS3_CONFIG.bucket, Key: key }, cb)
+    );
 
     return true;
   } catch (error) {
@@ -426,26 +419,93 @@ async function checkBucket() {
   try {
     logger.info('KS3 check bucket');
 
-    await new Promise((resolve, reject) => {
-      client.bucket.getACL(
-        {
-          Bucket: KS3_CONFIG.bucket,
-        },
-        (err, data, response) => {
-          if (err) {
-            logger.error(`KS3 bucket check error: ${err}`);
-            reject(err);
-          } else {
-            logger.info(`KS3 bucket accessible: ${KS3_CONFIG.bucket}`);
-            resolve(data);
-          }
-        }
-      );
-    });
+    await _ks3Callback('bucket check', (cb) =>
+      client.bucket.getACL({ Bucket: KS3_CONFIG.bucket }, cb)
+    );
+    logger.info(`KS3 bucket accessible: ${KS3_CONFIG.bucket}`);
 
     return true;
   } catch (error) {
     logger.error(`KS3 bucket not accessible: ${error.message}`);
+    return false;
+  }
+}
+
+// ------------------------------------------------------------
+// Presigned upload URL — прямая загрузка из браузера в KS3.
+//
+// Сервер генерирует подписанный PUT URL, браузер грузит файл напрямую
+// в KS3, минуя сервер. Это убирает фазу "Обработка..." (сервер→KS3)
+// и ускоряет загрузку примерно в 2 раза.
+//
+// Требует CORS на бакете (см. ensureBucketCors).
+// ------------------------------------------------------------
+
+/**
+ * Сгенерировать подписанный URL для прямой загрузки (PUT) в KS3.
+ *
+ * @param {string} key - ключ объекта в KS3
+ * @param {number} [expires=600] - время жизни URL в секундах (10 мин по умолчанию)
+ * @returns {Promise<string>} подписанный PUT URL
+ */
+async function getPresignedUploadUrl(key, expires = 600) {
+  try {
+    logger.info(`KS3 presigned PUT URL (expires in ${expires}s)`);
+    logger.debug(`KS3 presigned PUT URL key: ${key}`);
+
+    const url = await _ks3Callback('presigned PUT URL', (cb) =>
+      client.object.generatePresignedUrl(
+        {
+          Bucket: KS3_CONFIG.bucket,
+          Key: key,
+          Method: 'PUT',
+          Expires: expires,
+        },
+        cb
+      )
+    );
+
+    // KS3 SDK генерирует http:// URL, но CSP/CORS требуют https://
+    return url ? url.replace(/^http:\/\//, 'https://') : url;
+  } catch (error) {
+    logger.error(`Failed to generate presigned PUT URL: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Настроить CORS на бакете KS3 для прямой загрузки из браузера.
+ *
+ * Разрешает PUT/GET/HEAD из любого origin с любыми заголовками.
+ * Вызывается один раз при старте сервера.
+ *
+ * @returns {Promise<boolean>} true при успехе
+ */
+async function ensureBucketCors() {
+  try {
+    logger.info('KS3 ensure bucket CORS');
+
+    const corsRules = [
+      {
+        AllowedOrigin: ['*'],
+        AllowedMethod: ['PUT', 'GET', 'HEAD'],
+        AllowedHeader: ['*'],
+        ExposeHeader: ['ETag', 'Content-Length', 'Content-Type'],
+        MaxAgeSeconds: 3600,
+      },
+    ];
+
+    await _ks3Callback('putBucketCors', (cb) =>
+      client.bucket.putBucketCors(
+        { Bucket: KS3_CONFIG.bucket, Rules: corsRules },
+        cb
+      )
+    );
+
+    logger.info('KS3 bucket CORS configured');
+    return true;
+  } catch (error) {
+    logger.warn(`KS3 bucket CORS config failed (non-fatal): ${error.message}`);
     return false;
   }
 }
@@ -455,6 +515,8 @@ module.exports = {
   getFile,
   getFileStream,
   getPresignedUrl,
+  getPresignedUploadUrl,
+  ensureBucketCors,
   deleteFile,
   checkBucket,
   // Геттеры вместо экспорта client/KS3_CONFIG (не раскрываем секреты)
