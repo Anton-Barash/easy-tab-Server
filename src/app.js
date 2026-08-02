@@ -180,18 +180,6 @@ function buildApp() {
   });
 
 app.setNotFoundHandler({ prefix: '/' }, (request, reply) => {
-    const url = request.url;
-    
-    // Отдаём video-compress.html для URL без расширения
-    if (url === '/video-compress') {
-        reply
-            .header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            .header('Pragma', 'no-cache')
-            .type('text/html')
-            .sendFile('video-compress.html', path.join(__dirname, '../web'));
-        return;
-    }
-    
     const accept = request.headers.accept || '';
     if (accept.includes('text/html')) {
         reply.sendFile('index.html', path.join(__dirname, '../web'));
