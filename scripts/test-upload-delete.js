@@ -15,7 +15,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const ks3 = require('../src/services/ks3Storage');
+const ks3 = require('../src/services/s3Storage');
 
 const BASE = 'http://localhost:8000';
 const TEST_USER = 'test_bot_' + Date.now();

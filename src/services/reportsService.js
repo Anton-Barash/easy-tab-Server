@@ -13,9 +13,14 @@
 const db = require('../services/databaseService');
 const ks3 = require('./s3Storage');
 const thumbnailService = require('./thumbnailService');
-const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey } = require('../utils/fileUtils');
+const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey, getReportMimeType } = require('../utils/fileUtils');
 const logger = require('../utils/logger');
 const { generateReportHtml } = require('./htmlGenerator');
+
+/**
+ * MIME-типы для файлов отчёта определяются централизованно в fileUtils.js
+ * через getReportMimeType() — здесь дублирующая карта не нужна.
+ */
 
 /**
  * Сохранить отчёт (создать новый или обновить существующий).
@@ -419,22 +424,7 @@ async function getReportFile(ks3Folder, relativePath) {
     throw e;
   }
 
-  // Определяем MIME-тип по расширению
-  const ext = relativePath.split('.').pop().toLowerCase();
-  const mimeTypes = {
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    html: 'text/html',
-    css: 'text/css',
-    js: 'application/javascript',
-  };
-
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
+  const contentType = getReportMimeType(relativePath);
 
   return {
     data: fileData.data,
@@ -463,25 +453,7 @@ async function getReportFileByKey(storageKey) {
       return null;
     }
 
-    const ext = storageKey.split('.').pop().toLowerCase();
-    const mimeTypes = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      webp: 'image/webp',
-      bmp: 'image/bmp',
-      mp4: 'video/mp4',
-      webm: 'video/webm',
-      mov: 'video/quicktime',
-      avi: 'video/x-msvideo',
-      json: 'application/json',
-      html: 'text/html',
-      css: 'text/css',
-      js: 'application/javascript',
-    };
-
-    const contentType = mimeTypes[ext] || 'application/octet-stream';
+    const contentType = getReportMimeType(storageKey);
 
     return {
       data: fileData.data,

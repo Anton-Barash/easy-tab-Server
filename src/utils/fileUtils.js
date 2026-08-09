@@ -191,6 +191,23 @@ function getMimeType(filename) {
 }
 
 /**
+ * Определяет MIME-тип для файла отчёта по относительному пути или ключу.
+ *
+ * Используется в reportsService.js вместо отдельной дублирующей карты.
+ *
+ * @param {string} relativePath - путь или имя файла (например "photos/f1.jpg")
+ * @returns {string} MIME-тип, по умолчанию 'application/octet-stream'
+ */
+function getReportMimeType(relativePath) {
+  if (!relativePath) return MIME_TYPES['.default'];
+
+  const ext = relativePath.split('.').pop().toLowerCase();
+  if (!ext) return MIME_TYPES['.default'];
+
+  return MIME_TYPES['.' + ext] || MIME_TYPES['.default'];
+}
+
+/**
  * Определяет, нужно ли файл открывать в браузере (inline),
  * а не скачивать как вложение.
  *
@@ -239,6 +256,7 @@ module.exports = {
   sanitizeFilename,
   sanitizeRelativePath,
   getMimeType,
+  getReportMimeType,
   isInlineFile,
   buildStorageKey,
   MIME_TYPES,
