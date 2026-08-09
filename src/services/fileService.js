@@ -15,6 +15,7 @@
 const db = require('../services/databaseService');
 const ks3 = require('./ks3Storage');
 const thumbnailService = require('./thumbnailService');
+const shareService = require('./shareService');
 const {
   generateUuid,
   sanitizeFilename,
@@ -471,6 +472,43 @@ async function isOwner(fileId, userId) {
 // ------------------------------------------------------------
 
 /**
+ * Сгенерировать подписанный URL для файла, открытого по share-ссылке.
+ *
+ * Проверяется, что share-ссылка активна и файл принадлежит отчёту этой ссылки.
+ *
+ * @param {string} fileId - UUID файла
+ * @param {string} shareToken - токен share-ссылки
+ * @param {number} [expires=300] - время жизни URL в секундах
+ * @returns {Promise<{url: string, file: object}>}
+ * @throws {Error} 404/403/410
+ */
+async function presignFileForShare(fileId, shareToken, expires = 300) {
+  const share = await shareService.getShareByToken(shareToken);
+  const file = await getFileById(fileId);
+
+  if (!file) {
+    const err = new Error('File not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (parseInt(file.report_id, 10) !== parseInt(share.reportId, 10)) {
+    const err = new Error('File does not belong to shared report');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (!shareService.canView(share)) {
+    const err = new Error('Share link does not allow viewing files');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const url = await ks3.getPresignedUrl(file.storage_key, expires);
+  return { url, file };
+}
+
+/**
  * Сгенерировать подписанный URL для скачивания/просмотра файла.
  *
  * Перед генерацией URL проверяется, есть ли у пользователя
@@ -710,10 +748,140 @@ async function listUserFiles(userId) {
   return result.rows;
 }
 
+/**
+ * Подготовить presigned URL для загрузки файла через share-ссылку.
+ *
+ * Доступен анонимным пользователям, если share-ссылка активна и разрешает редактирование.
+ */
+async function presignUploadForShare({ shareToken, originalName, relativePath, reportId }) {
+  const share = await shareService.getShareByToken(shareToken);
+
+  if (!shareService.canEdit(share)) {
+    const err = new Error('Share link does not allow editing');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  if (reportId && parseInt(reportId, 10) !== parseInt(share.reportId, 10)) {
+    const err = new Error('Report ID does not match share link');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // Принудительно привязываем к отчёту share-ссылки
+  const effectiveReportId = share.reportId;
+
+  let ks3Folder = null;
+  let safeRelativePath = null;
+
+  const reportResult = await db.query(
+    'SELECT ks3_folder FROM reports WHERE id = $1',
+    [effectiveReportId]
+  );
+  if (reportResult.rows.length === 0) {
+    const err = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  ks3Folder = reportResult.rows[0].ks3_folder || null;
+  if (ks3Folder) {
+    safeRelativePath = relativePath ? sanitizeRelativePath(relativePath) : null;
+    if (relativePath && !safeRelativePath) {
+      const err = new Error('Invalid relativePath: path traversal detected');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  const uuid = generateUuid();
+  const safeName = sanitizeFilename(originalName);
+
+  let storageKey;
+  let relPath;
+  if (ks3Folder && safeRelativePath) {
+    storageKey = `${ks3Folder}${safeRelativePath}`;
+    relPath = safeRelativePath;
+  } else if (ks3Folder && !relativePath) {
+    storageKey = `${ks3Folder}${safeName}`;
+    relPath = safeName;
+  } else {
+    storageKey = buildStorageKey(uuid, originalName);
+    relPath = safeName;
+  }
+
+  const mimeType = getMimeType(originalName);
+  const uploadUrl = await ks3.getPresignedUploadUrl(storageKey);
+
+  logger.info(`presignUploadForShare: share=${shareToken}, name=${originalName}, reportId=${effectiveReportId}`);
+
+  return { uploadUrl, fileId: uuid, storageKey, mimeType, relPath, reportId: effectiveReportId };
+}
+
+/**
+ * Подтвердить загрузку файла через share-ссылку.
+ */
+async function confirmUploadForShare({ shareToken, fileId, storageKey, originalName, size, mimeType, relPath, parentId }) {
+  const share = await shareService.getShareByToken(shareToken);
+
+  if (!shareService.canEdit(share)) {
+    const err = new Error('Share link does not allow editing');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const reportId = share.reportId;
+  const inline = isInlineFile(originalName, mimeType);
+
+  // Получаем creator_user_id отчёта — он будет владельцем файла,
+  // т.к. owner_id NOT NULL в схеме, а анонимный пользователь не имеет ID.
+  const reportResult = await db.query(
+    'SELECT creator_user_id FROM reports WHERE id = $1',
+    [reportId]
+  );
+  if (reportResult.rows.length === 0) {
+    const err = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+  const ownerId = reportResult.rows[0].creator_user_id;
+
+  logger.info(`confirmUploadForShare: share=${shareToken}, file=${fileId}, name=${originalName}, reportId=${reportId}, ownerId=${ownerId}`);
+
+  const dbClient = await db.pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const result = await dbClient.query(
+      `INSERT INTO files
+         (id, owner_id, storage_key, original_name, size, mime_type, relative_path, parent_id, is_inline, report_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING *`,
+      [fileId, ownerId, storageKey, originalName, size, mimeType, relPath, parentId || null, inline, reportId]
+    );
+    const fileRecord = result.rows[0];
+
+    await dbClient.query('COMMIT');
+    logger.info(`confirmUploadForShare: created file ${fileId} via share`);
+    return fileRecord;
+  } catch (dbErr) {
+    await dbClient.query('ROLLBACK');
+    try {
+      await ks3.deleteFile(storageKey);
+      logger.warn(`confirmUploadForShare: DB insert failed, KS3 object deleted (compensation)`);
+    } catch (ks3Err) {
+      logger.error(`confirmUploadForShare: KS3 compensation delete failed: ${ks3Err.message}`);
+    }
+    throw dbErr;
+  } finally {
+    dbClient.release();
+  }
+}
+
 module.exports = {
   uploadFile,
   presignUpload,
   confirmUpload,
+  presignUploadForShare,
+  confirmUploadForShare,
   getFileById,
   hasPermission,
   isOwner,
@@ -724,4 +892,5 @@ module.exports = {
   listUserFiles,
   listFilesByReport,
   getReportFileUrls,
+  presignFileForShare,
 };

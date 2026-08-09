@@ -412,6 +412,51 @@ async function listMyFiles(request, reply) {
 }
 
 // ------------------------------------------------------------
+// GET /files/:id/presign
+// Получить подписанный URL для файла, открытого по share-ссылке
+// ------------------------------------------------------------
+
+/**
+ * Сгенерировать presigned URL для файла через share-ссылку.
+ *
+ * Query: ?share_token=abc (обязательно), ?expires=300 (опционально)
+ *
+ * Возвращает: { success, url, expires, file: { id, originalName, mimeType } }
+ */
+async function presignFileForShare(request, reply) {
+  const { id } = request.params;
+  const { share_token: shareToken } = request.query || {};
+
+  if (!shareToken) {
+    return reply.status(400).send({ success: false, error: 'share_token is required' });
+  }
+
+  const expires = Math.min(Math.max(parseInt(request.query.expires, 10) || 300, 60), 3600);
+
+  try {
+    const { url, file } = await fileService.presignFileForShare(id, shareToken, expires);
+
+    return reply.send({
+      success: true,
+      url,
+      expires,
+      file: {
+        id: file.id,
+        originalName: file.original_name,
+        mimeType: file.mime_type,
+        isInline: file.is_inline,
+      },
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate file URL' : error.message,
+    });
+  }
+}
+
+// ------------------------------------------------------------
 // POST /files/presign-upload
 // Получить presigned PUT URL для прямой загрузки в KS3
 // ------------------------------------------------------------
@@ -444,6 +489,52 @@ async function presignUpload(request, reply) {
       storageKey: result.storageKey,
       mimeType: result.mimeType,
       relPath: result.relPath,
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate upload URL' : error.message,
+    });
+  }
+}
+
+// ------------------------------------------------------------
+// POST /files/presign-upload-share
+// Presigned PUT URL для загрузки через share-ссылку
+// ------------------------------------------------------------
+
+/**
+ * Подготовить presigned URL для загрузки файла через share-ссылку.
+ *
+ * Body: { fileName, relativePath?, shareToken, reportId? }
+ */
+async function presignUploadForShare(request, reply) {
+  const { fileName, relativePath, shareToken, reportId } = request.body || {};
+
+  if (!fileName) {
+    return reply.status(400).send({ success: false, error: 'fileName is required' });
+  }
+  if (!shareToken) {
+    return reply.status(400).send({ success: false, error: 'shareToken is required' });
+  }
+
+  try {
+    const result = await fileService.presignUploadForShare({
+      shareToken,
+      originalName: fileName,
+      relativePath: relativePath || null,
+      reportId: reportId ? parseInt(reportId, 10) : null,
+    });
+
+    return reply.send({
+      success: true,
+      uploadUrl: result.uploadUrl,
+      fileId: result.fileId,
+      storageKey: result.storageKey,
+      mimeType: result.mimeType,
+      relPath: result.relPath,
+      reportId: result.reportId,
     });
   } catch (error) {
     const status = error.statusCode || 500;
@@ -519,12 +610,74 @@ async function confirmUpload(request, reply) {
   }
 }
 
+// ------------------------------------------------------------
+// POST /files/confirm-upload-share
+// Подтвердить загрузку через share-ссылку
+// ------------------------------------------------------------
+
+/**
+ * Подтвердить загрузку файла через share-ссылку.
+ *
+ * Body: { fileId, storageKey, fileName, size, mimeType, relPath, shareToken, parentId? }
+ */
+async function confirmUploadForShare(request, reply) {
+  const body = request.body || {};
+  const { fileId, storageKey, fileName, size, mimeType, relPath, shareToken, parentId } = body;
+
+  if (!fileId || !storageKey || !fileName || !size || !shareToken) {
+    const missing = [
+      !fileId ? 'fileId' : null,
+      !storageKey ? 'storageKey' : null,
+      !fileName ? 'fileName' : null,
+      !size ? 'size' : null,
+      !shareToken ? 'shareToken' : null,
+    ].filter(Boolean);
+    return reply.status(400).send({ success: false, error: `Missing: ${missing.join(', ')}` });
+  }
+
+  try {
+    const file = await fileService.confirmUploadForShare({
+      shareToken,
+      fileId,
+      storageKey,
+      originalName: fileName,
+      size: parseInt(size, 10),
+      mimeType,
+      relPath,
+      parentId: parentId || null,
+    });
+
+    return reply.status(201).send({
+      success: true,
+      file: {
+        id: file.id,
+        originalName: file.original_name,
+        size: file.size,
+        mimeType: file.mime_type,
+        relativePath: file.relative_path,
+        isInline: file.is_inline,
+        reportId: file.report_id,
+        createdAt: file.created_at,
+      },
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to confirm upload' : error.message,
+    });
+  }
+}
+
 module.exports = {
   uploadFile,
   presignUpload,
   confirmUpload,
+  presignUploadForShare,
+  confirmUploadForShare,
   getFile,
   downloadFile,
+  presignFileForShare,
   grantPermission,
   revokePermission,
   deleteFile,

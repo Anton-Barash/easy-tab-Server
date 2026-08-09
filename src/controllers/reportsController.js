@@ -13,6 +13,7 @@
 // ============================================================
 
 const reportsService = require('../services/reportsService');
+const zipService = require('../services/zipService');
 
 /**
  * POST /reports
@@ -176,10 +177,43 @@ async function getReportHtml(request, reply) {
   }
 }
 
+/**
+ * GET /reports/:publicId/zip
+ * Скачать ZIP-архив отчёта (JSON + HTML + медиа).
+ *
+ * Доступно только владельцу отчёта.
+ */
+async function downloadReportZip(request, reply) {
+  const { publicId } = request.params;
+
+  if (!publicId || publicId.length < 6) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+
+  try {
+    const userId = request.user.userId;
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
+
+    const { buffer, fileName } = await zipService.generateReportZip(report);
+
+    return reply
+      .header('Content-Disposition', `attachment; filename="${fileName}"`)
+      .type('application/zip')
+      .send(buffer);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate ZIP' : error.message,
+    });
+  }
+}
+
 module.exports = {
   saveReport,
   listReports,
   getReport,
   deleteReport,
   getReportHtml,
+  downloadReportZip,
 };

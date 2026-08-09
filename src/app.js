@@ -175,6 +175,18 @@ function buildApp() {
       reply.header('Access-Control-Allow-Origin', '*');
       if (path.includes('assets/ffmpeg/')) {
         reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+      } else if (
+        path.endsWith('main.dart.js') ||
+        path.endsWith('version.json') ||
+        path.endsWith('index.html') ||
+        path.endsWith('flutter_bootstrap.js') ||
+        path.endsWith('flutter.js')
+      ) {
+        // Не кэшировать файлы без hash в имени — всегда актуальная версия.
+        reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else {
+        // Остальные файлы Flutter содержат hash — можно кэшировать.
+        reply.header('Cache-Control', 'public, max-age=31536000, immutable');
       }
     },
   });

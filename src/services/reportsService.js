@@ -270,7 +270,8 @@ async function deleteReport(reportId, userId) {
  * @param {number|null} userId - ID пользователя (null для анонимов)
  * @returns {Promise<{id, title, ks3Folder, isPublic, creatorUserId}>}
  */
-async function getReportForView(reportId, userId) {
+async function getReportForView(reportId, userId, options = {}) {
+  const { skipAccessCheck = false } = options;
   const result = await db.query(
     'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE id = $1',
     [reportId]
@@ -282,13 +283,14 @@ async function getReportForView(reportId, userId) {
     throw err;
   }
 
-  return _mapReportForView(result.rows[0], userId);
+  return _mapReportForView(result.rows[0], userId, skipAccessCheck);
 }
 
 /**
  * Получить отчёт для просмотра по публичному идентификатору.
  */
-async function getReportForViewByPublicId(publicId, userId) {
+async function getReportForViewByPublicId(publicId, userId, options = {}) {
+  const { skipAccessCheck = false } = options;
   const result = await db.query(
     'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE public_id = $1',
     [publicId]
@@ -300,12 +302,12 @@ async function getReportForViewByPublicId(publicId, userId) {
     throw err;
   }
 
-  return _mapReportForView(result.rows[0], userId);
+  return _mapReportForView(result.rows[0], userId, skipAccessCheck);
 }
 
-function _mapReportForView(report, userId) {
-  // Проверка доступа
-  if (!report.is_public && (!userId || userId !== report.creator_user_id)) {
+function _mapReportForView(report, userId, skipAccessCheck = false) {
+  // Проверка доступа (пропускается для share-ссылок, где доступ проверен через токен)
+  if (!skipAccessCheck && !report.is_public && (!userId || userId !== report.creator_user_id)) {
     const err = new Error('Access denied');
     err.statusCode = 403;
     throw err;
@@ -333,7 +335,7 @@ function _mapReportForView(report, userId) {
  * @param {string} [baseUrl] - базовый URL сервера (устарело, сохранено для совместимости)
  * @returns {Promise<string>} HTML-контент
  */
-async function getReportHtml(report, token, baseUrl) {
+async function getReportHtml(report, token, baseUrl, shareToken = null) {
   let reportData = report.reportData;
 
   // Fallback на KS3 для старых отчётов без report_data.
@@ -359,7 +361,7 @@ async function getReportHtml(report, token, baseUrl) {
 
   const mediaUrls = await getReportMediaUrls(report.id, 3600);
   logger.info(`getReportHtml: generated HTML from DB JSON for report ${report.id}`);
-  return generateReportHtml(reportData, report.publicId, token, baseUrl, mediaUrls, report.ks3Folder);
+  return generateReportHtml(reportData, report.publicId, token, baseUrl, mediaUrls, report.ks3Folder, null, shareToken);
 }
 
 /**

@@ -168,9 +168,12 @@ function getQuestionDisplayName(question, langCode, questionIndex) {
  * @param {string} [baseUrl] - базовый URL сервера для абсолютных fallback URL
  * @param {Object} [mediaUrls] - { 'photos/f1.jpg': { full, thumb }, ... } presigned URL из KS3
  * @param {string} [ks3Folder] - папка отчёта в KS3 (не используется напрямую, оставлена для совместимости)
+ * @param {string|null} [offlineBasePath] - если задан, медиа ссылки формируются
+ *   относительно этого пути. Пустая строка означает корень архива
+ *   (например, 'photos/f1.jpg'). Используется для HTML внутри ZIP.
  * @returns {string} HTML-страница
  */
-function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3Folder) {
+function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3Folder, offlineBasePath = null, shareToken = null) {
   if (!reportData) {
     return '<html><body>Нет отчёта</body></html>';
   }
@@ -178,12 +181,20 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Используем серверный прокси для всех медиа, чтобы избежать
   // COEP/CORS-проблем с прямыми presigned URL из KS3 внутри iframe.
   const tokenSuffix = token ? `?token=${encodeURIComponent(token)}` : '';
+  const shareSuffix = shareToken ? `${tokenSuffix ? '&' : '?'}share_token=${encodeURIComponent(shareToken)}` : '';
   function resolveMediaUrls(localPath, mediaName) {
+    if (offlineBasePath != null) {
+      const safePath = (localPath || '').replace(/^\//, '');
+      const full = offlineBasePath.length > 0
+        ? `${offlineBasePath}/${safePath}`
+        : safePath;
+      return { full, thumb: full };
+    }
     const proxyBase = baseUrl
       ? `${baseUrl}/view/report/${publicId}`
       : `/view/report/${publicId}`;
-    const full = `${proxyBase}/files/${localPath}${tokenSuffix}`;
-    const thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}`;
+    const full = `${proxyBase}/files/${localPath}${tokenSuffix}${shareSuffix}`;
+    const thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}${shareSuffix}`;
     return { full, thumb };
   }
 

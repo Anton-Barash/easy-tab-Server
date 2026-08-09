@@ -19,7 +19,7 @@
 // подписанные URL для чужих объектов и раскрывали bucket/region.
 // ============================================================
 
-const { requireAuth } = require('../middleware/authMiddleware');
+const { requireAuth, optionalAuth } = require('../middleware/authMiddleware');
 const filesController = require('../controllers/filesController');
 
 async function filesRoutes(fastify) {
@@ -35,9 +35,17 @@ async function filesRoutes(fastify) {
   // Body JSON: { fileName, relativePath?, reportId? }
   fastify.post('/presign-upload', { preHandler: requireAuth }, filesController.presignUpload);
 
+  // Presigned PUT URL для загрузки через share-ссылку (анонимный доступ)
+  // Body JSON: { fileName, relativePath?, shareToken, reportId? }
+  fastify.post('/presign-upload-share', { preHandler: optionalAuth }, filesController.presignUploadForShare);
+
   // Подтверждение прямой загрузки — создать запись в БД
   // Body JSON: { fileId, storageKey, fileName, size, mimeType, relPath, reportId?, parentId? }
   fastify.post('/confirm-upload', { preHandler: requireAuth }, filesController.confirmUpload);
+
+  // Подтверждение загрузки через share-ссылку
+  // Body JSON: { fileId, storageKey, fileName, size, mimeType, relPath, shareToken, parentId? }
+  fastify.post('/confirm-upload-share', { preHandler: optionalAuth }, filesController.confirmUploadForShare);
 
   // Список всех файлов пользователя (владелец + выданные права)
   fastify.get('/', { preHandler: requireAuth }, filesController.listMyFiles);
@@ -67,6 +75,14 @@ async function filesRoutes(fastify) {
     '/:id/download',
     { preHandler: requireAuth },
     filesController.downloadFile
+  );
+
+  // Подписанный URL для файла, открытого по share-ссылке.
+  // Query: ?share_token=abc (обязательно), ?expires=300
+  fastify.get(
+    '/:id/presign',
+    { preHandler: optionalAuth },
+    filesController.presignFileForShare
   );
 
   // Выдать право доступа другому пользователю

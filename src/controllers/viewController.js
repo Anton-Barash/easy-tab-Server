@@ -22,6 +22,7 @@
 // ============================================================
 
 const reportsService = require('../services/reportsService');
+const shareService = require('../services/shareService');
 const { extractToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
 const path = require('path');
@@ -143,7 +144,17 @@ async function viewReportFile(request, reply) {
 
   try {
     const userId = request.user?.userId || null;
-    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
+    const shareToken = request.query.share_token;
+
+    // Если есть share-токен — валидируем и пропускаем проверку доступа
+    const skipAccessCheck = shareToken ? await (async () => {
+      const share = await shareService.getShareByToken(shareToken);
+      return shareService.canView(share);
+    })() : false;
+
+    const report = await reportsService.getReportForViewByPublicId(
+      publicId, userId, { skipAccessCheck }
+    );
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportFile: report ${report.publicId} has no ks3_folder`);
@@ -223,7 +234,17 @@ async function viewReportThumbnail(request, reply) {
 
   try {
     const userId = request.user?.userId || null;
-    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
+    const shareToken = request.query.share_token;
+
+    // Если есть share-токен — валидируем и пропускаем проверку доступа
+    const skipAccessCheck = shareToken ? await (async () => {
+      const share = await shareService.getShareByToken(shareToken);
+      return shareService.canView(share);
+    })() : false;
+
+    const report = await reportsService.getReportForViewByPublicId(
+      publicId, userId, { skipAccessCheck }
+    );
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportThumbnail: report ${publicId} has no ks3_folder`);
