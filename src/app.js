@@ -46,6 +46,9 @@ function isOriginAllowed(origin) {
 function buildApp() {
   const app = fastify({
     logger: config.logger,
+    // P3-49: отключаем встроенное логирование запросов Fastify,
+    // т.к. используем кастомный requestLogger, который обрезает query string.
+    disableRequestLogging: true,
     // trustProxy: корректный request.ip за обратным прокси (nginx/PM2)
     trustProxy: true,
     // M-31: ограничение размера JSON-тела (10MB) — защита от огромных payload.

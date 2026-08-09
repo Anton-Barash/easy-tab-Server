@@ -12,7 +12,7 @@
 
 const archiver = require('archiver');
 const db = require('./databaseService');
-const ks3 = require('./ks3Storage');
+const ks3 = require('./s3Storage');
 const htmlGenerator = require('./htmlGenerator');
 const logger = require('../utils/logger');
 

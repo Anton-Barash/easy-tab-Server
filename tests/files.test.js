@@ -1,6 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const buildApp = require('../src/app');
+const authService = require('../src/services/authService');
+
+function getTestAuthHeaders() {
+  const token = authService.generateToken({ userId: 1, username: 'testuser' });
+  return { Authorization: `Bearer ${token}` };
+}
 
 test('Health check route returns ok', async (t) => {
   const app = buildApp();
@@ -26,7 +32,8 @@ test('Files list returns empty array initially', async (t) => {
 
   const response = await app.inject({
     method: 'GET',
-    url: '/files/list',
+    url: '/files/',
+    headers: getTestAuthHeaders(),
   });
 
   assert.strictEqual(response.statusCode, 200);
@@ -42,6 +49,11 @@ test('Upload requires a file', async (t) => {
   const response = await app.inject({
     method: 'POST',
     url: '/files/upload',
+    headers: {
+      ...getTestAuthHeaders(),
+      'Content-Type': 'multipart/form-data; boundary=----test-boundary',
+    },
+    body: '',
   });
 
   assert.strictEqual(response.statusCode, 400);

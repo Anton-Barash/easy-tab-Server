@@ -13,7 +13,7 @@
 // ============================================================
 
 const db = require('../services/databaseService');
-const ks3 = require('./ks3Storage');
+const ks3 = require('./s3Storage');
 const thumbnailService = require('./thumbnailService');
 const shareService = require('./shareService');
 const {

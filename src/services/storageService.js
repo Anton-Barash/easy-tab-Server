@@ -1,5 +1,5 @@
 const localStorage = require('./localStorage');
-const ks3Storage = require('./ks3Storage');
+const ks3Storage = require('./s3Storage');
 const config = require('../config');
 
 function getStorage() {

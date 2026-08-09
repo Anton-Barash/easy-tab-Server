@@ -11,7 +11,7 @@
 // ============================================================
 
 const db = require('../services/databaseService');
-const ks3 = require('./ks3Storage');
+const ks3 = require('./s3Storage');
 const thumbnailService = require('./thumbnailService');
 const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey } = require('../utils/fileUtils');
 const logger = require('../utils/logger');

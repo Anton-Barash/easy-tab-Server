@@ -11,6 +11,7 @@
 // ============================================================
 
 const fileService = require('../services/fileService');
+const { sanitizeRelativePath } = require('../utils/fileUtils');
 
 // ------------------------------------------------------------
 // POST /files/upload
@@ -55,11 +56,13 @@ async function uploadFile(request, reply) {
 
   try {
     // Загружаем через сервис
+    const sanitizedRelativePath = relativePath ? sanitizeRelativePath(relativePath) : null;
+
     const file = await fileService.uploadFile({
       userId: request.user.userId,
       originalName: data.filename,
       body: buffer,
-      relativePath,
+      relativePath: sanitizedRelativePath,
       parentId,
       reportId: reportId ? parseInt(reportId, 10) : null,
     });
@@ -560,10 +563,6 @@ async function confirmUpload(request, reply) {
   const body = request.body || {};
   const { fileId, storageKey, fileName, size, mimeType, relPath, reportId, parentId } = body;
 
-  // Диагностика: логируем что пришло
-  const logger = require('../utils/logger');
-  logger.info(`confirmUpload: body=${JSON.stringify(body).substring(0, 500)}`);
-
   if (!fileId || !storageKey || !fileName || !size) {
     const missing = [
       !fileId ? 'fileId' : null,
@@ -571,7 +570,6 @@ async function confirmUpload(request, reply) {
       !fileName ? 'fileName' : null,
       !size ? 'size' : null,
     ].filter(Boolean);
-    logger.warn(`confirmUpload: missing fields: ${missing.join(', ')}`);
     return reply.status(400).send({ success: false, error: `Missing: ${missing.join(', ')}` });
   }
 

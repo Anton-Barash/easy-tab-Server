@@ -2,7 +2,7 @@ const buildApp = require('./app');
 const config = require('./config');
 const { runMigrations } = require('./db/migrationRunner');
 const { closePool } = require('./services/databaseService');
-const ks3 = require('./services/ks3Storage');
+const ks3 = require('./services/s3Storage');
 
 // P1-18: валидация конфигурации при старте (production: обязательные переменные).
 config.validateConfig(config);
