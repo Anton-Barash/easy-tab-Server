@@ -386,6 +386,7 @@ async function getReportMediaUrls(reportId, expires = 3600) {
     [reportId]
   );
 
+  const videoExtensions = ['mp4', 'webm', 'mov', 'avi'];
   const urls = {};
   for (const file of filesResult.rows) {
     try {
@@ -398,6 +399,21 @@ async function getReportMediaUrls(reportId, expires = 3600) {
       urls[file.relative_path] = { full, thumb };
     } catch (err) {
       logger.warn(`getReportMediaUrls: failed to generate URL for ${file.storage_key}: ${err.message}`);
+    }
+  }
+
+  // Связываем видео с их превью (thumb_*.jpg в той же папке).
+  // Превью загружаются клиентом как отдельные файлы и хранятся
+  // в БД с собственным relative_path (например, photos/thumb_v4_1_003.jpg).
+  for (const [relPath, entry] of Object.entries(urls)) {
+    const ext = relPath.split('.').pop().toLowerCase();
+    if (!videoExtensions.includes(ext)) continue;
+    const dir = relPath.substring(0, relPath.lastIndexOf('/') + 1);
+    const baseName = relPath.substring(relPath.lastIndexOf('/') + 1, relPath.lastIndexOf('.'));
+    const thumbPath = `${dir}thumb_${baseName}.jpg`;
+    if (urls[thumbPath]) {
+      entry.thumb = urls[thumbPath].full;
+      logger.debug(`getReportMediaUrls: linked video thumbnail ${thumbPath} → ${relPath}`);
     }
   }
 

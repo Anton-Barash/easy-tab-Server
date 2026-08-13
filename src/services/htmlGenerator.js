@@ -194,7 +194,33 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
       ? `${baseUrl}/view/report/${publicId}`
       : `/view/report/${publicId}`;
     const full = `${proxyBase}/files/${localPath}${tokenSuffix}${shareSuffix}`;
-    const thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}${shareSuffix}`;
+
+    // Проверяем, есть ли реальное превью в mediaUrls (thumb_*.jpg для видео,
+    // _thumb.jpg для изображений — загружены клиентом или сгенерированы сервером).
+    const mediaEntry = mediaUrls && mediaUrls[localPath];
+    const hasRealThumbnail = mediaEntry && mediaEntry.thumb && mediaEntry.thumb !== mediaEntry.full;
+
+    let thumb;
+    if (hasRealThumbnail) {
+      const isVideo = /\.(mp4|webm|mov|avi)$/i.test(localPath);
+      if (isVideo) {
+        // Для видео: превью thumb_*.jpg — отдельный файл, загруженный клиентом.
+        // Используем прокси /files/ (не /thumbnails/, т.к. sharp не умеет видео).
+        const dir = localPath.substring(0, localPath.lastIndexOf('/') + 1);
+        const baseName = localPath.substring(localPath.lastIndexOf('/') + 1, localPath.lastIndexOf('.'));
+        const thumbPath = `${dir}thumb_${baseName}.jpg`;
+        thumb = `${proxyBase}/files/${thumbPath}${tokenSuffix}${shareSuffix}`;
+      } else {
+        // Для изображений: используем прокси /thumbnails/ (генерирует через sharp).
+        thumb = `${proxyBase}/thumbnails/${localPath}${tokenSuffix}${shareSuffix}`;
+      }
+    } else {
+      // Для изображений — прокси /thumbnails/ сгенерирует превью через sharp.
+      // Для видео без превью — возвращаем null, чтобы использовать SVG-заглушку,
+      // т.к. sharp не умеет обрабатывать видеофайлы.
+      const isVideo = /\.(mp4|webm|mov|avi)$/i.test(localPath);
+      thumb = isVideo ? null : `${proxyBase}/thumbnails/${localPath}${tokenSuffix}${shareSuffix}`;
+    }
     return { full, thumb };
   }
 
@@ -501,6 +527,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      const mediaElements = document.querySelectorAll(".media-item");');
   buf.push('      media = Array.from(mediaElements).filter(el => parseInt(el.dataset.lang) === currentLanguage).map(el => ({');
   buf.push('        src: el.dataset.src,');
+  buf.push('        thumb: el.dataset.thumb,');
   buf.push('        type: el.dataset.type,');
   buf.push('        question: el.dataset.question,');
   buf.push('        answer: el.dataset.answer');
@@ -524,8 +551,8 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      media.forEach((m, index) => {');
   buf.push('        const thumbnail = document.createElement("img");');
   buf.push('        thumbnail.className = "lightbox-thumbnail";');
-  buf.push('        if (m.type === "image") { thumbnail.src = m.src; }');
-  buf.push('        else { thumbnail.src = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22 viewBox=%220 0 60 60%22><rect fill=%22%23e0e0e0%22 width=%2260%22 height=%2260%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2220%22>🎬</text></svg>"; }');
+  buf.push('        if (m.type === "image") { thumbnail.src = m.thumb || m.src; }');
+  buf.push('        else { thumbnail.src = m.thumb && m.thumb !== m.src ? m.thumb : "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2260%22 height=%2260%22 viewBox=%220 0 60 60%22><rect fill=%22%23e0e0e0%22 width=%2260%22 height=%2260%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2220%22>🎬</text></svg>"; }');
   buf.push('        thumbnail.onclick = function() { showMedia(index); };');
   buf.push('        container.appendChild(thumbnail);');
   buf.push('      });');
@@ -628,9 +655,9 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    function openGallery() {');
   buf.push('      const galleryGrid = document.getElementById("gallery-grid");');
   buf.push('      galleryGrid.innerHTML = "";');
-  buf.push('      const imageMedia = media.filter(m => m.type === "image");');
+  buf.push('      const allMedia = media.filter(m => m.type === "image" || m.type === "video");');
   buf.push('      const groupedMedia = {};');
-  buf.push('      imageMedia.forEach((m) => {');
+  buf.push('      allMedia.forEach((m) => {');
   buf.push('        const key = (m.question || "") + "|||" + (m.answer || "");');
   buf.push('        if (!groupedMedia[key]) { groupedMedia[key] = { question: m.question, answer: m.answer, items: [] }; }');
   buf.push('        groupedMedia[key].items.push(m);');
@@ -653,11 +680,26 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        group.items.forEach((m) => {');
   buf.push('          const galleryItem = document.createElement("div");');
   buf.push('          galleryItem.className = "gallery-item";');
-  buf.push('          const img = document.createElement("img");');
-  buf.push('          img.src = m.src;');
-  buf.push('          img.alt = m.question || "Photo";');
-  buf.push('          img.onclick = function() { closeGallery(); openLightbox(m.src, m.type); };');
-  buf.push('          galleryItem.appendChild(img);');
+  buf.push('          if (m.type === "video") {');
+  buf.push('            const videoWrapper = document.createElement("div");');
+  buf.push('            videoWrapper.style.cssText = "position:relative;width:100%;height:100%;";');
+  buf.push('            const img = document.createElement("img");');
+  buf.push('            img.src = m.thumb && m.thumb !== m.src ? m.thumb : "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22 viewBox=%220 0 200 200%22><rect fill=%22%23e0e0e0%22 width=%22200%22 height=%22200%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2260%22>🎬</text></svg>";');
+  buf.push('            img.style.cssText = "width:100%;height:100%;object-fit:cover;";');
+  buf.push('            img.alt = m.question || "Video";');
+  buf.push('            const playIcon = document.createElement("div");');
+  buf.push('            playIcon.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;background:rgba(0,0,0,0.6);border-radius:50%;display:flex;align-items:center;justify-content:center;pointer-events:none;";');
+  buf.push('            playIcon.innerHTML = \'<div style="width:0;height:0;border-left:18px solid white;border-top:10px solid transparent;border-bottom:10px solid transparent;margin-left:4px;"></div>\';');
+  buf.push('            videoWrapper.appendChild(img);');
+  buf.push('            videoWrapper.appendChild(playIcon);');
+  buf.push('            galleryItem.appendChild(videoWrapper);');
+  buf.push('          } else {');
+  buf.push('            const img = document.createElement("img");');
+  buf.push('            img.src = m.thumb || m.src;');
+  buf.push('            img.alt = m.question || "Photo";');
+  buf.push('            galleryItem.appendChild(img);');
+  buf.push('          }');
+  buf.push('          galleryItem.onclick = function() { closeGallery(); openLightbox(m.src, m.type); };');
   buf.push('          section.appendChild(galleryItem);');
   buf.push('          if (currentIndex >= 0 && currentIndex < media.length && media[currentIndex].src === m.src) { targetElement = galleryItem; }');
   buf.push('        });');
@@ -723,14 +765,20 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
 
     if (isImage) {
       parts.push(
-        `<div class="media-item" data-src="${fullSrc}" data-type="image" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'image')">` +
+        `<div class="media-item" data-src="${fullSrc}" data-thumb="${thumbnailSrc}" data-type="image" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'image')">` +
         `<img class="media-thumbnail" src="${thumbnailSrc}" loading="lazy" alt="${escapedName}" />` +
         `</div>`
       );
     } else {
+      // Для видео: если есть реальное превью (thumb_*.jpg), используем его.
+      // Иначе — SVG-заглушка с иконкой видеокамеры.
+      const hasThumbnail = thumbnailSrc !== fullSrc;
+      const videoThumbSrc = hasThumbnail
+        ? thumbnailSrc
+        : `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22 viewBox=%220 0 50 50%22><rect fill=%22%23e0e0e0%22 width=%2250%22 height=%2250%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2216%22>🎬</text></svg>`;
       parts.push(
-        `<div class="media-item" data-src="${fullSrc}" data-type="video" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'video')">` +
-        `<img class="media-thumbnail" src="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22 viewBox=%220 0 50 50%22><rect fill=%22%23e0e0e0%22 width=%2250%22 height=%2250%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2216%22>🎬</text></svg>" alt="${escapedName}" />` +
+        `<div class="media-item" data-src="${fullSrc}" data-thumb="${videoThumbSrc}" data-type="video" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'video')">` +
+        `<img class="media-thumbnail" src="${videoThumbSrc}" loading="lazy" alt="${escapedName}" />` +
         `</div>`
       );
     }
@@ -751,18 +799,23 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
     const isImage = media.type.startsWith('image');
     const urls = resolveMediaUrls(media.localPath, media.name);
     const fullSrc = urls.full;
+    const thumbnailSrc = urls.thumb || urls.full;
     const escapedName = escapeHtml(media.name ?? '');
 
     if (isImage) {
       parts.push(
-        `<div class="media-item media-hidden" data-src="${fullSrc}" data-type="image" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'image')">` +
-        `<img class="media-thumbnail" src="${fullSrc}" alt="${escapedName}" />` +
+        `<div class="media-item media-hidden" data-src="${fullSrc}" data-thumb="${thumbnailSrc}" data-type="image" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'image')">` +
+        `<img class="media-thumbnail" src="${thumbnailSrc}" alt="${escapedName}" />` +
         `</div>`
       );
     } else {
+      const hasThumbnailHidden = thumbnailSrc !== fullSrc;
+      const videoThumbSrcHidden = hasThumbnailHidden
+        ? thumbnailSrc
+        : `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22 viewBox=%220 0 50 50%22><rect fill=%22%23e0e0e0%22 width=%2250%22 height=%2250%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2216%22>🎬</text></svg>`;
       parts.push(
-        `<div class="media-item media-hidden" data-src="${fullSrc}" data-type="video" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'video')">` +
-        `<img class="media-thumbnail" src="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22 viewBox=%220 0 50 50%22><rect fill=%22%23e0e0e0%22 width=%2250%22 height=%2250%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2216%22>🎬</text></svg>" alt="${escapedName}" />` +
+        `<div class="media-item media-hidden" data-src="${fullSrc}" data-thumb="${videoThumbSrcHidden}" data-type="video" data-question="${questionName}" data-answer="${escapedAnswerText}" data-lang="${li}" onclick="openLightbox('${fullSrc}', 'video')">` +
+        `<img class="media-thumbnail" src="${videoThumbSrcHidden}" alt="${escapedName}" />` +
         `</div>`
       );
     }

@@ -1,6 +1,6 @@
 {
   "name": "easy_tab_server",
-  "version": "1.0.1",
+  "version": "1.0.22",
   "main": "src/index.js",
   "directories": {
     "test": "tests"
