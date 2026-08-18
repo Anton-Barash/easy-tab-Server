@@ -105,6 +105,13 @@ async function getShareInfo(request, reply) {
   try {
     const { share, report } = await shareService.getReportByShareToken(token);
 
+    // #19: reportData отдаём только если ссылка разрешает просмотр.
+    // Иначе любой обладатель токена (даже отозванного/невалидного
+    // permissions) получил бы полное содержимое отчёта.
+    if (!shareService.canView(share)) {
+      return reply.status(403).send({ success: false, error: 'Forbidden' });
+    }
+
     await shareService.logShareAccess({
       shareId: share.id,
       request,

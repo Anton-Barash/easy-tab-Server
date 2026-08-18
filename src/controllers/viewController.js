@@ -146,15 +146,24 @@ async function viewReportFile(request, reply) {
     const userId = request.user?.userId || null;
     const shareToken = request.query.share_token;
 
-    // Если есть share-токен — валидируем и пропускаем проверку доступа
-    const skipAccessCheck = shareToken ? await (async () => {
-      const share = await shareService.getShareByToken(shareToken);
-      return shareService.canView(share);
-    })() : false;
+    // Если есть share-токен — валидируем и получаем объект share.
+    // КРИТИЧНО (#1 IDOR): сам по себе валидный токен НЕ даёт доступ —
+    // нужна дополнительная проверка привязки share к отчёту (см. ниже).
+    const share = shareToken
+      ? await shareService.getShareByToken(shareToken)
+      : null;
+    const shareCanView = share != null && shareService.canView(share);
 
     const report = await reportsService.getReportForViewByPublicId(
-      publicId, userId, { skipAccessCheck }
+      publicId, userId, { skipAccessCheck: shareCanView }
     );
+
+    // Привязка токена к отчёту: share.reportId должен совпадать с
+    // запрошенным отчётом, иначе токен от отчёта A открывал бы отчёт B.
+    if (shareToken && !(shareCanView && share.reportId === report.id)) {
+      logger.warn(`viewReportFile: share-token report mismatch for report ${publicId}`);
+      return reply.status(403).send({ success: false, error: 'Forbidden' });
+    }
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportFile: report ${report.publicId} has no ks3_folder`);
@@ -236,15 +245,21 @@ async function viewReportThumbnail(request, reply) {
     const userId = request.user?.userId || null;
     const shareToken = request.query.share_token;
 
-    // Если есть share-токен — валидируем и пропускаем проверку доступа
-    const skipAccessCheck = shareToken ? await (async () => {
-      const share = await shareService.getShareByToken(shareToken);
-      return shareService.canView(share);
-    })() : false;
+    // КРИТИЧНО (#1 IDOR): валидируем share-токен и проверяем привязку к отчёту.
+    const share = shareToken
+      ? await shareService.getShareByToken(shareToken)
+      : null;
+    const shareCanView = share != null && shareService.canView(share);
 
     const report = await reportsService.getReportForViewByPublicId(
-      publicId, userId, { skipAccessCheck }
+      publicId, userId, { skipAccessCheck: shareCanView }
     );
+
+    // Привязка токена к отчёту (share.reportId === report.id).
+    if (shareToken && !(shareCanView && share.reportId === report.id)) {
+      logger.warn(`viewReportThumbnail: share-token report mismatch for report ${publicId}`);
+      return reply.status(403).send({ success: false, error: 'Forbidden' });
+    }
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportThumbnail: report ${publicId} has no ks3_folder`);
