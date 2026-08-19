@@ -19,5 +19,5 @@ jobs:
           cd ~/easy_tab_Server
           git pull origin main
           npm install
-          pm2 restart easyTab
+          pm2 restart file-server
           echo "Backend deployment completed successfully"
