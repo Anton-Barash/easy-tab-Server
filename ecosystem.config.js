@@ -19,10 +19,11 @@ module.exports = {
     max_memory_restart: '1G',
     env_production: {
       NODE_ENV: 'production',
-      PORT: 3000,
-      // Секреты — задать перед деплоем (через CI/CD или вручную):
-      // JWT_SECRET, DB_PASSWORD, KS3_ACCESS_KEY, KS3_SECRET_KEY,
-      // DB_HOST, DB_USER, DB_NAME, CORS_ALLOWED_ORIGINS
+      // Порт 8000 — именно его пробрасывает облачный балансировщик наружу
+      // (внешний адрес http://110.43.49.137:8000).
+      PORT: 8000,
+      // Секреты и внутренние адреса (DB_HOST=10.0.1.32 и т.д.) — в .env.production
+      // на сервере. Он загружается автоматически при NODE_ENV=production.
       // Не коммитить реальные значения в этот файл!
     },
   }],

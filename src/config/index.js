@@ -1,9 +1,22 @@
-require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
+
+// NODE_ENV может быть задан извне (PM2: --env production) до загрузки .env.
+// На компе разработчика он берётся из .env (development).
+const env = process.env.NODE_ENV || 'development';
+const rootDir = path.resolve(__dirname, '../..');
+
+// Сначала базовый .env (общий), затем .env.<NODE_ENV> (если есть) —
+// он переопределяет базовый. Так на компе (development) используются
+// внешние адреса, а на сервере (production) — внутренние (10.0.x.x).
+require('dotenv').config({ path: path.join(rootDir, '.env') });
+const envFile = path.join(rootDir, `.env.${env}`);
+if (env !== 'development' && fs.existsSync(envFile)) {
+  require('dotenv').config({ path: envFile, override: true });
+}
 
 const defaultConfig = require('./default');
 const productionConfig = require('./production');
-
-const env = process.env.NODE_ENV || 'development';
 
 const configs = {
   development: defaultConfig,

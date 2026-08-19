@@ -109,7 +109,10 @@ function buildApp() {
     // Cross-Origin-Opener-Policy + Cross-Origin-Embedder-Policy.
     crossOriginOpenerPolicy: { policy: 'same-origin' },
     crossOriginEmbedderPolicy: { policy: 'require-corp' },
-    hsts: config.env === 'production',
+    // HSTS отключён: сервер развёрнут на HTTP (без TLS-терминации),
+    // включение HSTS заставляло браузер форсировать HTTPS и ломало
+    // загрузку статики (ERR_SSL_PROTOCOL_ERROR на порту 8000).
+    hsts: false,
   });
 
   // H-09: Глобальный rate limit — 100 запросов/мин на IP.

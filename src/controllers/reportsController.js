@@ -162,8 +162,9 @@ async function getReportHtml(request, reply) {
     const authHeader = request.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-    // Абсолютный baseUrl сервера — используется только для fallback proxy-ссылок.
-    const baseUrl = `${request.protocol}://${request.host}`;
+    // baseUrl = null — используем относительные пути /view/report/:id/...
+    // вместо абсолютных https-URL, чтобы избежать mixed content на HTTP-сервере.
+    const baseUrl = null;
 
     const html = await reportsService.getReportHtml(report, token, baseUrl);
 

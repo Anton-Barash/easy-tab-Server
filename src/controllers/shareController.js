@@ -19,6 +19,7 @@ const reportsService = require('../services/reportsService');
 const fileService = require('../services/fileService');
 const zipService = require('../services/zipService');
 const logger = require('../utils/logger');
+const { getBaseUrl } = require('../utils/pathHelper');
 
 /**
  * POST /reports/:id/shares
@@ -40,7 +41,9 @@ async function createShare(request, reply) {
       permissions,
     });
 
-    const baseUrl = `${request.protocol}://${request.host}`;
+    // Используем getBaseUrl, которая определяет протокол по реальному
+    // TLS-соединению, а не по X-Forwarded-Proto от клиента.
+    const baseUrl = getBaseUrl(request);
     const url = `${baseUrl}/#/welcome?token=${share.token}`;
 
     return reply.send({ success: true, share: { ...share, url } });
@@ -201,7 +204,9 @@ async function getSharedReportHtml(request, reply) {
       return reply.status(403).send({ success: false, error: 'Forbidden' });
     }
 
-    const baseUrl = `${request.protocol}://${request.host}`;
+    // baseUrl = null — относительные пути /view/report/:id/... для медиа,
+    // чтобы избежать mixed content на HTTP-сервере.
+    const baseUrl = null;
     const html = await reportsService.getReportHtml(report, null, baseUrl, token);
 
     await shareService.logShareAccess({

@@ -2,6 +2,7 @@ node_modules/
 uploads/
 logs/
 .env
+.env.production
 web/
 
 # Временные log-файлы и артефакты установки

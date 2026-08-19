@@ -19,5 +19,7 @@ jobs:
           cd ~/easy_tab_Server
           git pull origin main
           npm install
-          pm2 restart file-server
+          # startOrReload: работает и при первом запуске, и при рестарте.
+          # --update-env: подхватывает новые переменные из ecosystem.config.js.
+          pm2 startOrReload ecosystem.config.js --env production --update-env
           echo "Backend deployment completed successfully"
