@@ -25,6 +25,7 @@ const reportsService = require('../services/reportsService');
 const shareService = require('../services/shareService');
 const { extractToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
+const { getBaseUrl } = require('../utils/pathHelper');
 const path = require('path');
 
 /**
@@ -64,9 +65,12 @@ async function viewReport(request, reply) {
     // Получаем отчёт с проверкой доступа (включает report_data)
     const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
-    // Токен и baseUrl для proxy-ссылок на медиа (для приватных отчётов)
+    // Токен и baseUrl для proxy-ссылок на медиа (для приватных отчётов).
+    // Используем getBaseUrl — определяет протокол по socket.encrypted,
+    // а не по request.protocol/X-Forwarded-Proto. На чистом HTTP-сервере
+    // возвращает http:// — избегает mixed content и ERR_SSL_PROTOCOL_ERROR.
     const token = extractToken(request);
-    const baseUrl = `${request.protocol}://${request.host}`;
+    const baseUrl = getBaseUrl(request);
 
     // Генерируем HTML из JSON БД с proxy URL для медиа
     const html = await reportsService.getReportHtml(report, token, baseUrl);
