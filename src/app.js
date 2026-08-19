@@ -100,6 +100,10 @@ function buildApp() {
         connectSrc: ["'self'", 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com', 'https://unpkg.com'],
         mediaSrc: ["'self'", 'blob:', 'http://localhost:8000', 'https://localhost:8000', 'https://*.gstatic.com', 'https://*.ksyuncs.com', 'https://unpkg.com'],
         manifestSrc: ["'self'"],
+        // P1-14: отключаем upgrade-insecure-requests (есть в ДЕФОЛТАХ helmet),
+        // иначе браузер форсит HTTPS для всех подресурсов на HTTP-сервере
+        // (ERR_SSL_PROTOCOL_ERROR). null — убирает директиву из дефолтов.
+        upgradeInsecureRequests: null,
       },
     },
     // CORP: cross-origin — разрешаем встраивание ресурсов сервера
