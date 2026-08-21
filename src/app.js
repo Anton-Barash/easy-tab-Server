@@ -184,7 +184,9 @@ function buildApp() {
       reply.header('Cross-Origin-Embedder-Policy', 'unsafe-none');
       reply.header('Access-Control-Allow-Origin', '*');
       if (path.includes('assets/ffmpeg/')) {
-        reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        // ffmpeg-бинарники (~30 MB) имеют фиксированные имена без хэша и
+        // меняются при обновлении пакета — неделя, как canvaskit.
+        reply.header('Cache-Control', 'public, max-age=604800');
       } else if (
         path.endsWith('main.dart.js') ||
         // Deferred-чанки (main.dart.js_N.part.js) не содержат content-hash
@@ -195,7 +197,16 @@ function buildApp() {
         path.endsWith('index.html') ||
         path.endsWith('flutter_bootstrap.js') ||
         path.endsWith('flutter.js') ||
-        path.endsWith('flutter_service_worker.js')
+        path.endsWith('flutter_service_worker.js') ||
+        // Файлы без content-hash в имени, меняющиеся между релизами.
+        // Иначе браузер держит старую версию поверх нового index.html —
+        // реальный инцидент: ffmpeg-loader.js закэшировался на год
+        // (immutable) и после деплоя выбрасывал "FFmpegWASM not found".
+        path.endsWith('ffmpeg-loader.js') ||
+        path.endsWith('ffmpeg.js') ||
+        path.endsWith('manifest.json') ||
+        path.endsWith('FontManifest.json') ||
+        path.includes('AssetManifest')
       ) {
         // Не кэшировать файлы без hash в имени — всегда актуальная версия.
         reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -205,8 +216,12 @@ function buildApp() {
         // Проверяем оба разделителя: на Windows path приходит с '\'.
         reply.header('Cache-Control', 'public, max-age=604800');
       } else {
-        // Остальные файлы Flutter содержат hash — можно кэшировать.
-        reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        // Шрифты, иконки, прочие ассеты: имён без хэша, но меняются только
+        // при апгрейде SDK/пакетов. Умеренный кэш: повторный визит быстрый,
+        // а после апгрейда браузер обновится максимум через сутки.
+        // (Раньше здесь был immutable на год — это ломало пользователей
+        // со старым кэшем после каждого деплоя.)
+        reply.header('Cache-Control', 'public, max-age=86400');
       }
     },
   });
