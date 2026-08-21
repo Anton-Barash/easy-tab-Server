@@ -412,9 +412,9 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
       // Number cell
       if (ai === 0) {
-        buf.push(`      <td style="background:#fafafa;font-weight:500;width:40px;color:#00B0F0;">${i + 1}</td>`);
+        buf.push(`      <td style="background:#fafafa;font-weight:500;width:44px;color:#00B0F0;">${i + 1}</td>`);
       } else {
-        buf.push('      <td style="background:#fafafa;width:40px;"></td>');
+        buf.push('      <td style="background:#fafafa;width:44px;"></td>');
       }
 
       // Question cell
@@ -424,16 +424,16 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
           const style = li === 0 ? '' : 'display:none;';
           qParts.push(`<span class="question-lang-${li}" style="${style}">${questionNames[li]}</span>`);
         }
-        buf.push(`      <td style="background:#fafafa;font-weight:500;width:200px;">${qParts.join('')}</td>`);
+        buf.push(`      <td style="background:#fafafa;font-weight:500;width:220px;">${qParts.join('')}</td>`);
       } else {
-        buf.push('      <td style="background:#fafafa;width:200px;"></td>');
+        buf.push('      <td style="background:#fafafa;width:220px;"></td>');
       }
 
       // Attention cell
       if (answerHasAttention[ai]) {
-        buf.push('      <td style="text-align:center;vertical-align:middle;width:30px;background:#fff3cd;"><span style="font-weight:bold;color:#ef4444;">!</span></td>');
+        buf.push('      <td style="text-align:center;vertical-align:middle;width:33px;background:#fff3cd;"><span style="font-weight:bold;color:#ef4444;">!</span></td>');
       } else {
-        buf.push('      <td style="text-align:center;vertical-align:middle;width:30px;"></td>');
+        buf.push('      <td style="text-align:center;vertical-align:middle;width:33px;"></td>');
       }
 
       // Answer text cell
@@ -447,7 +447,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
         aParts.push(`<span class="answer-lang-${li}" style="${style}">${content}</span>`);
       }
       const answerBg = answerHasAttention[ai] ? '#fff3cd' : 'white';
-      buf.push(`      <td style="background:${answerBg};width:375px;">${aParts.join('')}</td>`);
+      buf.push(`      <td style="background:${answerBg};width:413px;">${aParts.join('')}</td>`);
 
       // Media cell
       const mParts = [];
@@ -455,7 +455,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
         const style = li === 0 ? '' : 'display:none;';
         mParts.push(`<span class="media-lang-${li}" style="${style}">${mediaCellContent(ai, li, i, allMediaByQandAandLang, questionNames, answersByLang, resolveMediaUrls)}</span>`);
       }
-      buf.push(`      <td style="background:#fafafa;width:200px;">${mParts.join('')}</td>`);
+      buf.push(`      <td style="background:#fafafa;width:220px;">${mParts.join('')}</td>`);
 
 
       buf.push('    </tr>');
