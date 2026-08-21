@@ -23,6 +23,12 @@ jobs:
         source: "./"
         target: "~/easy_tab_Server/"
         overwrite: true
+        # Не копировать на сервер то, что там уже есть или не нужно:
+        # .git — защищённые права на объекты, node_modules — ставится npm install,
+        # .env* — секреты сервера, uploads/logs — пользовательские данные,
+        # web — сборка фронта, доставляемая отдельным workflow.
+        rm: true
+        exclude: ".git/,node_modules/,.env,.env.production,uploads/,logs/,web/"
 
     - name: Restart backend on Server
       uses: appleboy/ssh-action@master
