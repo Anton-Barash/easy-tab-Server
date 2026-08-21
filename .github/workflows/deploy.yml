@@ -16,8 +16,20 @@ jobs:
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_KEY }}
         script: |
+          # set -e: любая ошибка = красный workflow. Без этого падение
+          # git pull было невидимым: npm/pm2 шли по старому коду, и деплой
+          # выглядел «зелёным», хотя сервер не обновился (случай 20.08:
+          # workflow success, а на сервере остался старый бандл).
+          set -e
           cd ~/easy_tab_Server
-          git pull origin main
+          # fetch + reset --hard вместо pull: сервер — это deploy-target,
+          # рабочая копия должна быть точной копией origin/main. pull
+          # молча абортируется при любых локальных изменениях на сервере
+          # (например, файлы web/, попавшие туда в обход git), а reset
+          # самолечится от этого. Любые правки прямо на сервере теряются —
+          # это осознанно: вся правка только через git.
+          git fetch origin main
+          git reset --hard origin/main
           npm install
           # startOrReload: работает и при первом запуске, и при рестарте.
           # --update-env: подхватывает новые переменные из ecosystem.config.js.
