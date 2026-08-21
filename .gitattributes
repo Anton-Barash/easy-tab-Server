@@ -1,0 +1,19 @@
+# Все текстовые файлы репозитория сохраняются с LF (Unix-стиль).
+# Это важно для deploy-скриптов, которые выполняются на Ubuntu-сервере.
+* text=auto eol=lf
+
+# Бинарные файлы не должны подвергаться автозамене переводов строк.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.mp4 binary
+*.webm binary
+*.mov binary
+*.avi binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.wasm binary
