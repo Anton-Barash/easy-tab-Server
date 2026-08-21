@@ -187,13 +187,23 @@ function buildApp() {
         reply.header('Cache-Control', 'public, max-age=31536000, immutable');
       } else if (
         path.endsWith('main.dart.js') ||
+        // Deferred-чанки (main.dart.js_N.part.js) не содержат content-hash
+        // в имени — при редеплое имена те же, содержимое другое. Не кэшируем,
+        // иначе старые чанки сломают приложение после обновления.
+        path.includes('main.dart.js_') ||
         path.endsWith('version.json') ||
         path.endsWith('index.html') ||
         path.endsWith('flutter_bootstrap.js') ||
-        path.endsWith('flutter.js')
+        path.endsWith('flutter.js') ||
+        path.endsWith('flutter_service_worker.js')
       ) {
         // Не кэшировать файлы без hash в имени — всегда актуальная версия.
         reply.header('Cache-Control', 'no-cache, no-store, must-revalidate');
+      } else if (path.includes('canvaskit/') || path.includes('canvaskit\\')) {
+        // canvaskit версионируется движком Flutter, но имя файла без хэша —
+        // кэшируем умеренно (неделя), чтобы не сломаться при обновлении движка.
+        // Проверяем оба разделителя: на Windows path приходит с '\'.
+        reply.header('Cache-Control', 'public, max-age=604800');
       } else {
         // Остальные файлы Flutter содержат hash — можно кэшировать.
         reply.header('Cache-Control', 'public, max-age=31536000, immutable');

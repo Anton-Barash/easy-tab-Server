@@ -33,10 +33,18 @@ addEventListener("message", eventListener);
 if (!window._flutter) {
   window._flutter = {};
 }
-_flutter.buildConfig = {"engineRevision":"42d3d75a56efe1a2e9902f52dc8006099c45d937","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"},{}]};
+_flutter.buildConfig = {"engineRevision":"42d3d75a56efe1a2e9902f52dc8006099c45d937","builds":[{"compileTarget":"dart2js","renderer":"canvaskit","mainJsPath":"main.dart.js"}]};
 
+
+// canvaskit загружается с локального сервера (build/web/canvaskit),
+// а не с CDN Google (gstatic) — это убирает внешнюю зависимость,
+// ускоряет первую загрузку и позволяет работать в сетях,
+// где gstatic заблокирован.
 _flutter.loader.load({
+  config: {
+    canvasKitBaseUrl: "canvaskit/",
+  },
   serviceWorkerSettings: {
-    serviceWorkerVersion: "1776901382" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */
-  }
+    serviceWorkerVersion: "12645158" /* Flutter's service worker is deprecated and will be removed in a future Flutter release. */,
+  },
 });

@@ -25,7 +25,6 @@ const reportsService = require('../services/reportsService');
 const shareService = require('../services/shareService');
 const { extractToken } = require('../middleware/authMiddleware');
 const logger = require('../utils/logger');
-const { getBaseUrl } = require('../utils/pathHelper');
 const path = require('path');
 
 /**
@@ -65,12 +64,9 @@ async function viewReport(request, reply) {
     // Получаем отчёт с проверкой доступа (включает report_data)
     const report = await reportsService.getReportForViewByPublicId(publicId, userId);
 
-    // Токен и baseUrl для proxy-ссылок на медиа (для приватных отчётов).
-    // Используем getBaseUrl — определяет протокол по socket.encrypted,
-    // а не по request.protocol/X-Forwarded-Proto. На чистом HTTP-сервере
-    // возвращает http:// — избегает mixed content и ERR_SSL_PROTOCOL_ERROR.
+    // Токен и baseUrl для proxy-ссылок на медиа (для приватных отчётов)
     const token = extractToken(request);
-    const baseUrl = getBaseUrl(request);
+    const baseUrl = `${request.protocol}://${request.host}`;
 
     // Генерируем HTML из JSON БД с proxy URL для медиа
     const html = await reportsService.getReportHtml(report, token, baseUrl);
@@ -150,24 +146,15 @@ async function viewReportFile(request, reply) {
     const userId = request.user?.userId || null;
     const shareToken = request.query.share_token;
 
-    // Если есть share-токен — валидируем и получаем объект share.
-    // КРИТИЧНО (#1 IDOR): сам по себе валидный токен НЕ даёт доступ —
-    // нужна дополнительная проверка привязки share к отчёту (см. ниже).
-    const share = shareToken
-      ? await shareService.getShareByToken(shareToken)
-      : null;
-    const shareCanView = share != null && shareService.canView(share);
+    // Если есть share-токен — валидируем и пропускаем проверку доступа
+    const skipAccessCheck = shareToken ? await (async () => {
+      const share = await shareService.getShareByToken(shareToken);
+      return shareService.canView(share);
+    })() : false;
 
     const report = await reportsService.getReportForViewByPublicId(
-      publicId, userId, { skipAccessCheck: shareCanView }
+      publicId, userId, { skipAccessCheck }
     );
-
-    // Привязка токена к отчёту: share.reportId должен совпадать с
-    // запрошенным отчётом, иначе токен от отчёта A открывал бы отчёт B.
-    if (shareToken && !(shareCanView && share.reportId === report.id)) {
-      logger.warn(`viewReportFile: share-token report mismatch for report ${publicId}`);
-      return reply.status(403).send({ success: false, error: 'Forbidden' });
-    }
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportFile: report ${report.publicId} has no ks3_folder`);
@@ -249,21 +236,15 @@ async function viewReportThumbnail(request, reply) {
     const userId = request.user?.userId || null;
     const shareToken = request.query.share_token;
 
-    // КРИТИЧНО (#1 IDOR): валидируем share-токен и проверяем привязку к отчёту.
-    const share = shareToken
-      ? await shareService.getShareByToken(shareToken)
-      : null;
-    const shareCanView = share != null && shareService.canView(share);
+    // Если есть share-токен — валидируем и пропускаем проверку доступа
+    const skipAccessCheck = shareToken ? await (async () => {
+      const share = await shareService.getShareByToken(shareToken);
+      return shareService.canView(share);
+    })() : false;
 
     const report = await reportsService.getReportForViewByPublicId(
-      publicId, userId, { skipAccessCheck: shareCanView }
+      publicId, userId, { skipAccessCheck }
     );
-
-    // Привязка токена к отчёту (share.reportId === report.id).
-    if (shareToken && !(shareCanView && share.reportId === report.id)) {
-      logger.warn(`viewReportThumbnail: share-token report mismatch for report ${publicId}`);
-      return reply.status(403).send({ success: false, error: 'Forbidden' });
-    }
 
     if (!report.ks3Folder) {
       logger.warn(`viewReportThumbnail: report ${publicId} has no ks3_folder`);

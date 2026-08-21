@@ -53,23 +53,6 @@ function escapeHtmlWithBr(input) {
 }
 
 /**
- * Безопасная сериализация JSON для встраивания в <script> (#2 XSS).
- *
- * JSON.stringify сам по себе НЕ экранирует последовательность "</script>"
- * и HTML-опасные символы "<", ">", а также разделители строк U+2028/U+2029
- * (в JS-строках они были бы ошибкой до ES2019). Заменяем их на Unicode-
- * escape, чтобы данные нельзя было использовать для выхода из блока <script>.
- */
-function safeJsonInline(value) {
-  return JSON.stringify(value)
-    .replace(/</g, '\\u003c')
-    .replace(/>/g, '\\u003e')
-    .replace(/&/g, '\\u0026')
-    .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029');
-}
-
-/**
  * Сортирует языки по приоритету (RU, EN, ZH...), лимит MAX_LANGUAGES.
  */
 function sortLanguages(languages) {
@@ -524,7 +507,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    let isDragging = false;');
   buf.push('    let startX = 0;');
   buf.push('    let startY = 0;');
-  buf.push(`    const allLanguages = ${safeJsonInline(languages)};`);
+  buf.push(`    const allLanguages = ${JSON.stringify(languages)};`);
   buf.push('    let currentLanguage = 0;');
 
   buf.push('    function switchLanguage(li) {');

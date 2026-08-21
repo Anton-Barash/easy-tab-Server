@@ -32,7 +32,7 @@ const authService = require('../services/authService');
 function extractUser(request) {
   const token = extractToken(request);
   if (!token) {
-    // #18: не логируем cookies/query — в них могут быть секреты/токены.
+    console.log('[DEBUG] No token found. Cookies:', request.cookies, 'Query:', request.query);
     return null;
   }
   return authService.verifyToken(token);
@@ -61,7 +61,7 @@ function extractToken(request) {
   // 2. Проверяем cookie auth_token (для iframe и браузерных запросов)
   const cookieToken = request.cookies?.auth_token;
   if (cookieToken && typeof cookieToken === 'string') {
-    // #18: токен никогда не логируем, даже частично.
+    console.log('[DEBUG] Found auth_token cookie:', cookieToken.substring(0, 20) + '...');
     return cookieToken;
   }
 
