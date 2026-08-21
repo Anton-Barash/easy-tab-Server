@@ -27,7 +27,8 @@ jobs:
         # .git — защищённые права на объекты, node_modules — ставится npm install,
         # .env* — секреты сервера, uploads/logs — пользовательские данные,
         # web — сборка фронта, доставляемая отдельным workflow.
-        rm: true
+        # ВАЖНО: rm: true нельзя использовать, иначе SCP сначала полностью
+        # удалит target-папку, включая .env.production, uploads/, logs/ и web/.
         exclude: ".git/,node_modules/,.env,.env.production,uploads/,logs/,web/"
 
     - name: Restart backend on Server
