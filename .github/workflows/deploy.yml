@@ -22,14 +22,18 @@ jobs:
           # workflow success, а на сервере остался старый бандл).
           set -e
           cd ~/easy_tab_Server
-          # fetch + reset --hard вместо pull: сервер — это deploy-target,
+          # fetch + checkout origin/main вместо pull: сервер — это deploy-target,
           # рабочая копия должна быть точной копией origin/main. pull
-          # молча абортируется при любых локальных изменениях на сервере
-          # (например, файлы web/, попавшие туда в обход git), а reset
-          # самолечится от этого. Любые правки прямо на сервере теряются —
-          # это осознанно: вся правка только через git.
+          # молча абортируется при любых локальных изменениях на сервере,
+          # а checkout --force принудительно приводит код к origin/main.
+          # Важно: папка web/ исключена (':(exclude)web') — туда фронт кладётся
+          # SCP-ом (deploy-web.yml), и git-сброс не должен его затирать.
           git fetch origin main
-          git reset --hard origin/main
+          # Один раз снимаем web/ с git-индекса на сервере (до этого папка
+          # отслеживалась). На свежем клоне папка уже не в git — команда
+          # просто завершится ошибкой, которую мы игнорируем.
+          git rm -r --cached web 2>/dev/null || true
+          git checkout --force origin/main -- . ':(exclude)web'
           npm install
           # startOrReload: работает и при первом запуске, и при рестарте.
           # --update-env: подхватывает новые переменные из ecosystem.config.js.
