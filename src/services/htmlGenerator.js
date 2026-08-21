@@ -412,9 +412,9 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
       // Number cell
       if (ai === 0) {
-        buf.push(`      <td style="background:#fafafa;font-weight:500;width:44px;color:#00B0F0;">${i + 1}</td>`);
+        buf.push(`      <td style="background:#fafafa;font-weight:500;width:48px;color:#00B0F0;">${i + 1}</td>`);
       } else {
-        buf.push('      <td style="background:#fafafa;width:44px;"></td>');
+        buf.push('      <td style="background:#fafafa;width:48px;"></td>');
       }
 
       // Question cell
@@ -431,9 +431,9 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
       // Attention cell
       if (answerHasAttention[ai]) {
-        buf.push('      <td style="text-align:center;vertical-align:middle;width:33px;background:#fff3cd;"><span style="font-weight:bold;color:#ef4444;">!</span></td>');
+        buf.push('      <td style="text-align:center;vertical-align:middle;width:36px;background:#fff3cd;"><span style="font-weight:bold;color:#ef4444;">!</span></td>');
       } else {
-        buf.push('      <td style="text-align:center;vertical-align:middle;width:33px;"></td>');
+        buf.push('      <td style="text-align:center;vertical-align:middle;width:36px;"></td>');
       }
 
       // Answer text cell
@@ -447,7 +447,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
         aParts.push(`<span class="answer-lang-${li}" style="${style}">${content}</span>`);
       }
       const answerBg = answerHasAttention[ai] ? '#fff3cd' : 'white';
-      buf.push(`      <td style="background:${answerBg};width:413px;">${aParts.join('')}</td>`);
+      buf.push(`      <td style="background:${answerBg};width:454px;">${aParts.join('')}</td>`);
 
       // Media cell
       const mParts = [];
@@ -824,8 +824,155 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
   return `<div class="media-thumbnails">${parts.join('')}</div>`;
 }
 
+// ------------------------------------------------------------
+// Welcome-страница share-ссылки (чистый HTML, без Flutter).
+// ------------------------------------------------------------
+
+/**
+ * Генерирует HTML-welcome страницу для share-ссылки.
+ *
+ * Отдаётся по GET /reports/shares/:token/welcome. Страница показывает
+ * название отчёта, срок действия ссылки и кнопки-действия:
+ *   - «Открыть веб-версию» (edit) — Flutter: /#/share-edit?token=...
+ *   - «Открыть HTML»              — /reports/shares/:token/html
+ *   - «Скачать ZIP»               — /reports/shares/:token/zip
+ *
+ * Для view-only ссылок кнопка «Открыть веб-версию» не показывается.
+ *
+ * Безопасность: токен НЕ зашивается в HTML (он уже в URL, которым
+ * поделились). Никаких секретов на страницу не попадает.
+ *
+ * @param {object} share  - объект share-ссылки ({token, permissions, expiresAt})
+ * @param {object} report - объект отчёта ({title, reportData})
+ * @param {string} baseUrl- базовый URL сервера (protocol://host)
+ * @param {object} labels - локализованные подписи ({title, edit, view, zip, validUntil, viewOnly})
+ */
+function generateWelcomeHtml(share, report, baseUrl, labels) {
+  const reportData = (report && report.reportData) || {};
+  const title = escapeHtml(reportData.reportName || report.title || labels.noName);
+  const canEdit = share.permissions === 'edit';
+
+  const langCode = 'ru';
+  // Кнопка «Открыть веб-версию» ведёт на /#/share-edit — маршрут, который
+  // index.html НЕ перехватывает, поэтому грузится Flutter и сразу открывает
+  // редактор отчёта (без welcome-экрана с кнопками).
+  const editUrl = `${baseUrl}/#/share-edit?token=${encodeURIComponent(share.token)}`;
+  const htmlUrl = `${baseUrl}/reports/shares/${encodeURIComponent(share.token)}/html`;
+  const zipUrl = `${baseUrl}/reports/shares/${encodeURIComponent(share.token)}/zip`;
+
+  let expiresLabel = '';
+  if (share.expiresAt) {
+    const d = new Date(share.expiresAt);
+    if (!Number.isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const hour = String(d.getHours()).padStart(2, '0');
+      const minute = String(d.getMinutes()).padStart(2, '0');
+      expiresLabel = `${labels.validUntil} ${day}.${month}.${d.getFullYear()} ${hour}:${minute}`;
+    }
+  }
+
+  const card = (icon, titleText, subtitle, href) => `
+    <a href="${href}" class="action-card">
+      <div class="action-icon">${icon}</div>
+      <div class="action-text">
+        <div class="action-title">${escapeHtml(titleText)}</div>
+        <div class="action-subtitle">${escapeHtml(subtitle)}</div>
+      </div>
+      <div class="action-arrow">›</div>
+    </a>`;
+
+  let actionsHtml = '';
+  if (canEdit) {
+    actionsHtml += card(
+      '✎',
+      labels.openWebEditor,
+      labels.openWebEditorDesc,
+      editUrl,
+    );
+    actionsHtml += card(
+      '⇩',
+      labels.downloadZip,
+      labels.downloadZipDesc,
+      zipUrl,
+    );
+  }
+  actionsHtml += card(
+    '〈/〉',
+    labels.openHtmlTooltip,
+    labels.openHtmlDesc,
+    htmlUrl,
+  );
+
+  return `<!DOCTYPE html>
+<html lang="${langCode}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f8f7f2;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    color: #424242;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .container { width: 100%; max-width: 520px; }
+  .icon-circle {
+    width: 64px; height: 64px; margin: 0 auto 24px;
+    background: #e5e7eb; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; color: #333;
+  }
+  h1 {
+    font-size: 24px; font-weight: 700; text-align: center;
+    color: #424242; margin-bottom: 8px; word-break: break-word;
+  }
+  .access-line { font-size: 14px; color: #666; text-align: center; margin-bottom: 4px; }
+  .expires-line { font-size: 13px; color: #999; text-align: center; margin-bottom: 32px; }
+  .actions { display: flex; flex-direction: column; gap: 12px; }
+  .action-card {
+    display: flex; align-items: center; gap: 16px;
+    background: #ffffff; border: 1px solid #d1d5db; border-radius: 12px;
+    padding: 14px 16px; text-decoration: none; color: #424242;
+    transition: background 0.15s;
+  }
+  .action-card:hover { background: #f3f4f6; }
+  .action-icon {
+    width: 40px; height: 40px; flex-shrink: 0;
+    background: #f3f4f6; border-radius: 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; color: #333;
+  }
+  .action-text { flex: 1; min-width: 0; }
+  .action-title { font-size: 15px; font-weight: 600; color: #424242; }
+  .action-subtitle { font-size: 13px; color: #666; margin-top: 2px; }
+  .action-arrow { font-size: 22px; color: #999; }
+  .view-only-banner {
+    background: #fff8e1; border: 1px solid #ffc107; border-radius: 12px;
+    padding: 12px 16px; font-size: 13px; color: #424242;
+    margin-bottom: 20px; display: flex; gap: 12px; align-items: flex-start;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon-circle">${canEdit ? '✎' : '👁'}</div>
+    <h1>${title}</h1>
+    <div class="access-line">${escapeHtml(canEdit ? labels.editAccess : labels.viewOnlyAccess)}</div>
+    ${expiresLabel ? `<div class="expires-line">${escapeHtml(expiresLabel)}</div>` : ''}
+    ${canEdit ? '' : `<div class="view-only-banner"><span>🔒</span><span>${escapeHtml(labels.viewOnlyWarning)}</span></div>`}
+    <div class="actions">${actionsHtml}</div>
+  </div>
+</body>
+</html>`;
+}
+
 module.exports = {
   generateReportHtml,
+  generateWelcomeHtml,
   escapeHtml,
   escapeHtmlWithBr,
   sortLanguages,

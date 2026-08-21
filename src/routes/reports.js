@@ -66,6 +66,9 @@ async function reportsRoutes(fastify) {
   // HTML для просмотра по share-ссылке
   fastify.get('/shares/:token/html', { preHandler: optionalAuth }, shareController.getSharedReportHtml);
 
+  // Welcome-страница share-ссылки (чистый HTML) — редирект из /#/welcome
+  fastify.get('/shares/:token/welcome', { preHandler: optionalAuth }, shareController.getSharedWelcomeHtml);
+
   // ZIP для офлайн-работы по share-ссылке
   fastify.get('/shares/:token/zip', { preHandler: optionalAuth }, shareController.downloadSharedReportZip);
 }

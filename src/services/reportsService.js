@@ -340,7 +340,7 @@ function _mapReportForView(report, userId, skipAccessCheck = false) {
  * @param {string} [baseUrl] - базовый URL сервера (устарело, сохранено для совместимости)
  * @returns {Promise<string>} HTML-контент
  */
-async function getReportHtml(report, token, baseUrl, shareToken = null) {
+async function getReportHtml(report, token, baseUrl, shareToken = null, shareCanEdit = false) {
   let reportData = report.reportData;
 
   // Fallback на KS3 для старых отчётов без report_data.

@@ -18,7 +18,7 @@ const shareService = require('../services/shareService');
 const reportsService = require('../services/reportsService');
 const fileService = require('../services/fileService');
 const zipService = require('../services/zipService');
-const logger = require('../utils/logger');
+const { generateWelcomeHtml } = require('../services/htmlGenerator');
 
 /**
  * POST /reports/:id/shares
@@ -215,6 +215,56 @@ async function getSharedReportHtml(request, reply) {
 }
 
 /**
+ * GET /reports/shares/:token/welcome
+ * HTML-welcome страница share-ссылки (чистый HTML, без Flutter).
+ * Показывает название отчёта и кнопки-действия. Во Flutter переходит
+ * только кнопка «Редактировать» (/#/share-edit?token=...).
+ */
+async function getSharedWelcomeHtml(request, reply) {
+  const { token } = request.params;
+  const anonymousId = request.query.anonymous_id || null;
+
+  try {
+    const { share, report } = await shareService.getReportByShareToken(token);
+
+    if (!shareService.canView(share)) {
+      return reply.status(403).send({ success: false, error: 'Forbidden' });
+    }
+
+    const baseUrl = `${request.protocol}://${request.host}`;
+    const labels = {
+      noName: 'Без названия',
+      editAccess: 'Доступ на редактирование',
+      viewOnlyAccess: 'Доступ только для просмотра',
+      validUntil: 'Ссылка действительна до',
+      viewOnlyWarning: 'Эта ссылка открыта только для просмотра. Редактирование недоступно.',
+      openWebEditor: 'Редактировать',
+      openWebEditorDesc: 'Редактировать отчёт в браузере',
+      downloadZip: 'Скачать ZIP',
+      downloadZipDesc: 'Офлайн-копия отчёта',
+      openHtmlTooltip: 'Открыть HTML',
+      openHtmlDesc: 'Просмотреть отчёт в лёгкой версии',
+    };
+    const html = generateWelcomeHtml(share, report, baseUrl, labels);
+
+    await shareService.logShareAccess({
+      shareId: share.id,
+      request,
+      anonymousId,
+      action: 'welcome_html_open',
+    });
+
+    return reply.type('text/html').send(html);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate welcome page' : error.message,
+    });
+  }
+}
+
+/**
  * GET /reports/shares/:token/zip
  * ZIP-архив отчёта (JSON + медиа + HTML) для офлайн-работы.
  */
@@ -258,5 +308,6 @@ module.exports = {
   getShareInfo,
   saveSharedReport,
   getSharedReportHtml,
+  getSharedWelcomeHtml,
   downloadSharedReportZip,
 };
