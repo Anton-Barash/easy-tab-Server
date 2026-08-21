@@ -30,8 +30,6 @@ jobs:
         # ВАЖНО: rm: true нельзя использовать, иначе SCP сначала полностью
         # удалит target-папку, включая .env.production, uploads/, logs/ и web/.
         exclude: ".git/,node_modules/,.env,.env.production,uploads/,logs/,web/"
-        proxy_host: 127.0.0.1
-        proxy_port: 12334
 
     - name: Restart backend on Server
       uses: appleboy/ssh-action@master
@@ -39,8 +37,6 @@ jobs:
         host: ${{ secrets.SERVER_HOST }}
         username: ${{ secrets.SERVER_USER }}
         key: ${{ secrets.SSH_KEY }}
-        proxy_host: 127.0.0.1
-        proxy_port: 12334
         script: |
           set -e
           cd ~/easy_tab_Server
