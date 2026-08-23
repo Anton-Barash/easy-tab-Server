@@ -297,7 +297,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .attention-answer { color: #f69a15; }');
   buf.push('    .lightbox-question { font-weight: bold; font-size: 16px; margin-bottom: 5px; }');
   buf.push('    .lightbox-answer { font-size: 14px; }');
-  buf.push('    .lightbox-image-container { position: relative; width: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; }');
+  buf.push('    .lightbox-image-container { position: relative; width: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; touch-action: none; }');
   buf.push('    .lightbox-image-container.dragging { cursor: grabbing; }');
   buf.push('    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; }');
   buf.push('    .lightbox-thumbnails-bar { position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 10px 15px; border-radius: 8px; max-width: 80%; overflow: hidden; z-index: 10001; }');
@@ -507,6 +507,12 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    let isDragging = false;');
   buf.push('    let startX = 0;');
   buf.push('    let startY = 0;');
+  buf.push('    let startPinchDist = 0;');
+  buf.push('    let startPinchScale = 1;');
+  buf.push('    let startPinchPanX = 0;');
+  buf.push('    let startPinchPanY = 0;');
+  buf.push('    let startPinchMidX = 0;');
+  buf.push('    let startPinchMidY = 0;');
   buf.push(`    const allLanguages = ${JSON.stringify(languages)};`);
   buf.push('    let currentLanguage = 0;');
 
@@ -595,12 +601,14 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        answerEl.textContent = media[currentIndex].answer || "";');
   buf.push('      }');
   buf.push('      document.getElementById("lightbox").classList.add("active");');
+  buf.push('      document.body.style.overflow = "hidden";');
   buf.push('      resetZoom();');
   buf.push('      updateActiveThumbnail();');
   buf.push('    }');
 
   buf.push('    function closeLightbox() {');
   buf.push('      document.getElementById("lightbox").classList.remove("active");');
+  buf.push('      document.body.style.overflow = "";');
   buf.push('      document.getElementById("lightbox-video").pause();');
   buf.push('    }');
 
@@ -638,6 +646,50 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    });');
   buf.push('    document.addEventListener("mouseup", function() { isDragging = false; container.classList.remove("dragging"); });');
   buf.push('    container.addEventListener("wheel", function(e) { e.preventDefault(); if (e.deltaY < 0) zoomIn(); else zoomOut(); });');
+  // Жесты на сенсорных экранах: панорамирование одним пальцем,
+  // масштабирование двумя (pinch). preventDefault на touchmove
+  // останавливает прокрутку/зум всей страницы.
+  buf.push('    container.addEventListener("touchstart", function(e) {');
+  buf.push('      if (e.touches.length === 1) {');
+  buf.push('        isDragging = true;');
+  buf.push('        startX = e.touches[0].clientX - panX;');
+  buf.push('        startY = e.touches[0].clientY - panY;');
+  buf.push('        container.classList.add("dragging");');
+  buf.push('      } else if (e.touches.length === 2) {');
+  buf.push('        isDragging = false;');
+  buf.push('        container.classList.remove("dragging");');
+  buf.push('        const dx = e.touches[0].clientX - e.touches[1].clientX;');
+  buf.push('        const dy = e.touches[0].clientY - e.touches[1].clientY;');
+  buf.push('        startPinchDist = Math.max(1, Math.sqrt(dx * dx + dy * dy));');
+  buf.push('        startPinchScale = scale;');
+  buf.push('        startPinchPanX = panX;');
+  buf.push('        startPinchPanY = panY;');
+  buf.push('        startPinchMidX = (e.touches[0].clientX + e.touches[1].clientX) / 2;');
+  buf.push('        startPinchMidY = (e.touches[0].clientY + e.touches[1].clientY) / 2;');
+  buf.push('      }');
+  buf.push('    }, { passive: false });');
+  buf.push('    container.addEventListener("touchmove", function(e) {');
+  buf.push('      e.preventDefault();');
+  buf.push('      if (e.touches.length === 1 && isDragging) {');
+  buf.push('        panX = e.touches[0].clientX - startX;');
+  buf.push('        panY = e.touches[0].clientY - startY;');
+  buf.push('        applyTransform();');
+  buf.push('      } else if (e.touches.length === 2) {');
+  buf.push('        const dx = e.touches[0].clientX - e.touches[1].clientX;');
+  buf.push('        const dy = e.touches[0].clientY - e.touches[1].clientY;');
+  buf.push('        const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));');
+  buf.push('        scale = Math.min(Math.max(startPinchScale * (dist / startPinchDist), 0.5), 5);');
+  buf.push('        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;');
+  buf.push('        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;');
+  buf.push('        panX = startPinchPanX + (midX - startPinchMidX);');
+  buf.push('        panY = startPinchPanY + (midY - startPinchMidY);');
+  buf.push('        applyTransform();');
+  buf.push('      }');
+  buf.push('    }, { passive: false });');
+  buf.push('    container.addEventListener("touchend", function() {');
+  buf.push('      isDragging = false;');
+  buf.push('      container.classList.remove("dragging");');
+  buf.push('    });');
   buf.push('    document.addEventListener("keydown", function(e) {');
   buf.push('      if (document.getElementById("lightbox").classList.contains("active")) {');
   buf.push('        if (e.key === "ArrowRight") nextMedia();');
