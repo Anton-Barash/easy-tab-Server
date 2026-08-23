@@ -285,33 +285,48 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Lightbox
   buf.push('    .lightbox { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; }');
   buf.push('    .lightbox.active { display: flex; }');
-  buf.push('    .lightbox-controls { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; z-index: 10002; }');
-  buf.push('    .lightbox-controls button { background: rgba(255,255,255,0.2); border: none; color: white; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 16px; transition: background 0.2s; }');
-  buf.push('    .lightbox-controls button:hover { background: rgba(255,255,255,0.3); }');
-  buf.push('    .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); border: none; color: white; padding: 15px 20px; border-radius: 4px; cursor: pointer; font-size: 20px; transition: background 0.2s; z-index: 10001; }');
+  // Top bar: лево — глаз (скрыть UI), центр — зум-контролы, право — сетка/закрыть.
+  buf.push('    .lightbox-topbar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 14px; z-index: 10002; background: linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0)); }');
+  buf.push('    .lightbox-topbar .spacer { flex: 1 1 auto; min-width: 8px; }');
+  buf.push('    .lightbox-ui-btn { background: rgba(255,255,255,0.2); backdrop-filter: blur(2px); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; line-height: 1; transition: background 0.2s; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; height: 38px; min-width: 38px; }');
+  buf.push('    .lightbox-ui-btn:hover { background: rgba(255,255,255,0.3); }');
+  buf.push('    .lightbox-ui-btn.small { padding: 6px 10px; height: 34px; min-width: 34px; font-size: 14px; }');
+  buf.push('    .lightbox-controls { display: flex; gap: 6px; flex-wrap: wrap; }');
+  buf.push('    .lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.2); border: none; color: white; padding: 12px 16px; border-radius: 8px; cursor: pointer; font-size: 18px; transition: background 0.2s; z-index: 10001; min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }');
   buf.push('    .lightbox-nav:hover { background: rgba(255,255,255,0.3); }');
-  buf.push('    .lightbox-nav.prev { left: calc(50% - 500px); }');
-  buf.push('    .lightbox-nav.next { right: calc(50% - 500px); }');
-  buf.push('    .lightbox-close { position: absolute; top: 20px; right: 20px; background: none; border: none; color: white; font-size: 32px; cursor: pointer; z-index: 10002; }');
-  buf.push('    .lightbox-info { position: absolute; top: 0px; left: 0px; background: rgba(0,0,0,0.7); color: white; padding: 15px 20px; border-radius: 8px; max-width: 280px; overflow-y: auto; text-align: left; z-index: 10001; }');
+  buf.push('    .lightbox-nav.prev { left: 16px; }');
+  buf.push('    .lightbox-nav.next { right: 16px; }');
+  // Кнопки-подсказки (zoom и сетка) исчезают в режиме «без UI» и в gallery-overlay нет.
+  buf.push('    .lightbox-info { position: absolute; top: 60px; left: 14px; right: 14px; background: rgba(0,0,0,0.7); color: white; padding: 12px 14px; border-radius: 8px; overflow-y: auto; text-align: left; z-index: 10001; max-height: 34vh; }');
   buf.push('    .attention-answer { color: #f69a15; }');
-  buf.push('    .lightbox-question { font-weight: bold; font-size: 16px; margin-bottom: 5px; }');
-  buf.push('    .lightbox-answer { font-size: 14px; }');
+  buf.push('    .lightbox-question { font-weight: bold; font-size: 15px; margin-bottom: 5px; line-height: 1.3; }');
+  buf.push('    .lightbox-answer { font-size: 14px; line-height: 1.4; }');
   buf.push('    .lightbox-image-container { position: relative; width: 100%; height: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; touch-action: none; }');
   buf.push('    .lightbox-image-container.dragging { cursor: grabbing; }');
   buf.push('    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; }');
-  buf.push('    .lightbox-thumbnails-bar { position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 10px 15px; border-radius: 8px; max-width: 80%; overflow: hidden; z-index: 10001; }');
-  buf.push('    @media (max-width: 1000px) { .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } }');
-  buf.push('    @media (max-width: 768px) { .lightbox-info { left: 20px; right: 20px; top: 60px; bottom: auto; max-width: none; max-height: 100px; } .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } .lightbox-thumbnails-bar { bottom: 10px; } }');
+  buf.push('    .lightbox-thumbnails-bar { position: absolute; bottom: 12px; left: 14px; right: 14px; background: rgba(0,0,0,0.7); padding: 8px 10px; border-radius: 8px; overflow: hidden; z-index: 10001; }');
+  // Режим «просмотра без UI»: скрыть все, кроме стрелок и самой кнопки-глаз.
+  buf.push('    .lightbox.ui-hidden .lightbox-topbar .hide-with-ui, .lightbox.ui-hidden .spacer, .lightbox.ui-hidden .lightbox-controls { display: none !important; }');
+  buf.push('    .lightbox.ui-hidden .lightbox-info, .lightbox.ui-hidden .lightbox-thumbnails-bar { display: none !important; }');
+  buf.push('    .lightbox.ui-hidden .lightbox-topbar { background: transparent; justify-content: flex-start; }');
+  // Mobile touch-friendly: thumbnails уже адаптивны, делаем info компактнее.
+  buf.push('    @media (max-width: 640px) {');
+  buf.push('      .lightbox-ui-btn { height: 36px; min-width: 36px; font-size: 15px; padding: 6px 10px; }');
+  buf.push('      .lightbox-info { top: 54px; left: 10px; right: 10px; padding: 10px 12px; max-height: 28vh; }');
+  buf.push('      .lightbox-question { font-size: 14px; }');
+  buf.push('      .lightbox-answer { font-size: 13px; }');
+  buf.push('      .lightbox-nav { padding: 10px 12px; min-width: 40px; min-height: 40px; font-size: 16px; left: 8px; }');
+  buf.push('      .lightbox-nav.next { left: auto; right: 8px; }');
+  buf.push('      .lightbox-thumbnails-bar { left: 8px; right: 8px; bottom: 8px; padding: 6px 8px; }');
+  buf.push('    }');
   buf.push('    .thumbnails-container { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.5) rgba(0,0,0,0.3); }');
   buf.push('    .thumbnails-container::-webkit-scrollbar { height: 6px; }');
   buf.push('    .thumbnails-container::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; }');
   buf.push('    .thumbnails-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.5); border-radius: 3px; }');
-  buf.push('    .lightbox-thumbnail { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; cursor: pointer; opacity: 0.6; transition: opacity 0.2s, border 0.2s; border: 2px solid transparent; }');
+  buf.push('    .lightbox-thumbnail { width: 60px; height: 60px; object-fit: cover; border-radius: 4px; cursor: pointer; opacity: 0.6; transition: opacity 0.2s, border 0.2s; border: 2px solid transparent; flex: 0 0 auto; }');
   buf.push('    .lightbox-thumbnail:hover { opacity: 1; }');
   buf.push('    .lightbox-thumbnail.active { opacity: 1; border-color: #00B0F0; }');
-  buf.push('    .lightbox-grid-btn { position: absolute; top: 20px; right: 70px; background: rgba(255,255,255,0.2); border: none; color: white; font-size: 24px; cursor: pointer; z-index: 10002; padding: 5px 12px; border-radius: 4px; transition: background 0.2s; }');
-  buf.push('    .lightbox-grid-btn:hover { background: rgba(255,255,255,0.3); }');
+  buf.push('    @media (max-width: 640px) { .lightbox-thumbnail { width: 48px; height: 48px; } }');
   // Gallery
   buf.push('    .gallery-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: none; flex-direction: column; z-index: 9998; }');
   buf.push('    .gallery-overlay.active { display: flex; }');
@@ -467,23 +482,33 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
   // === Lightbox HTML ===
   buf.push('  <div class="lightbox" id="lightbox">');
-  buf.push('    <button class="lightbox-close" onclick="closeLightbox()">×</button>');
-  buf.push('    <button class="lightbox-grid-btn" onclick="openGallery()" title="Просмотр всех фото">⊞</button>');
+  buf.push('    <div class="lightbox-topbar">');
+  // Слева — кнопка-глаз: переключает режим скрытия UI.
+  buf.push('      <button class="lightbox-ui-btn" id="lightbox-ui-toggle" onclick="toggleUiVisibility()" title="Скрыть/показать элементы управления">');
+  buf.push('        <span id="lightbox-eye-icon" style="font-size:18px;line-height:1;">👁</span>');
+  buf.push('      </button>');
+  buf.push('      <div class="spacer hide-with-ui"></div>');
+  // Центр — зум-контролы.
+  buf.push('      <div class="lightbox-controls hide-with-ui">');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomIn()" title="Увеличить">+</button>');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomOut()" title="Уменьшить">−</button>');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="resetZoom()" title="Сбросить масштаб">100%</button>');
+  buf.push('      </div>');
+  buf.push('      <div class="spacer hide-with-ui"></div>');
+  // Справа — сетка и закрыть.
+  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="openGallery()" title="Просмотр сеткой">⊞</button>');
+  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="closeLightbox()" title="Закрыть">×</button>');
+  buf.push('    </div>');
   buf.push('    <div class="lightbox-info">');
   buf.push('      <div class="lightbox-question" id="lightbox-question"></div>');
   buf.push('      <div class="lightbox-answer" id="lightbox-answer"></div>');
   buf.push('    </div>');
-  buf.push('    <div class="lightbox-controls">');
-  buf.push('      <button onclick="zoomIn()">+</button>');
-  buf.push('      <button onclick="zoomOut()">-</button>');
-  buf.push('      <button onclick="resetZoom()">100%</button>');
-  buf.push('    </div>');
-  buf.push('    <button class="lightbox-nav prev" onclick="prevMedia()">←</button>');
+  buf.push('    <button class="lightbox-nav prev" onclick="prevMedia()" title="Предыдущее">←</button>');
   buf.push('    <div class="lightbox-image-container" id="lightbox-container">');
   buf.push('      <img id="lightbox-img" src="" alt="" style="display:none;" />');
   buf.push('      <video id="lightbox-video" controls autoplay playsinline style="display:none;max-width:100%;max-height:100%;object-fit:contain;"></video>');
   buf.push('    </div>');
-  buf.push('    <button class="lightbox-nav next" onclick="nextMedia()">→</button>');
+  buf.push('    <button class="lightbox-nav next" onclick="nextMedia()" title="Следующее">→</button>');
   buf.push('    <div class="lightbox-thumbnails-bar" id="lightbox-thumbnails-bar">');
   buf.push('      <div class="thumbnails-container" id="thumbnails-container"></div>');
   buf.push('    </div>');
@@ -610,6 +635,22 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      document.getElementById("lightbox").classList.remove("active");');
   buf.push('      document.body.style.overflow = "";');
   buf.push('      document.getElementById("lightbox-video").pause();');
+  buf.push('      setUiHidden(false);');
+  buf.push('    }');
+
+  buf.push('    function setUiHidden(hidden) {');
+  buf.push('      const lb = document.getElementById("lightbox");');
+  buf.push('      const icon = document.getElementById("lightbox-eye-icon");');
+  buf.push('      if (!lb || !icon) return;');
+  buf.push('      lb.classList.toggle("ui-hidden", !!hidden);');
+  buf.push('      icon.innerHTML = hidden');
+  buf.push('        ? \'🫣\'');
+  buf.push('        : \'👁\';');
+  buf.push('    }');
+
+  buf.push('    function toggleUiVisibility() {');
+  buf.push('      const lb = document.getElementById("lightbox");');
+  buf.push('      setUiHidden(!lb.classList.contains("ui-hidden"));');
   buf.push('    }');
 
   buf.push('    function showMedia(index) {');
