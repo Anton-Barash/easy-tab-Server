@@ -935,13 +935,22 @@ function generateWelcomeHtml(share, report, baseUrl, labels) {
     </a>`;
 
   let actionsHtml = '';
+  // 1. Просмотр (лёгкая HTML-версия).
+  actionsHtml += card(
+    '〈/〉',
+    labels.openHtmlTooltip,
+    labels.openHtmlDesc,
+    htmlUrl,
+  );
   if (canEdit) {
+    // 2. Редактировать (веб-версия).
     actionsHtml += card(
       '✎',
       labels.openWebEditor,
       labels.openWebEditorDesc,
       editUrl,
     );
+    // 3. Скачать ZIP для офлайн-работы.
     actionsHtml += card(
       '⇩',
       labels.downloadZip,
@@ -949,12 +958,6 @@ function generateWelcomeHtml(share, report, baseUrl, labels) {
       zipUrl,
     );
   }
-  actionsHtml += card(
-    '〈/〉',
-    labels.openHtmlTooltip,
-    labels.openHtmlDesc,
-    htmlUrl,
-  );
 
   return `<!DOCTYPE html>
 <html lang="${langCode}">

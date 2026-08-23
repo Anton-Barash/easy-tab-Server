@@ -69,21 +69,48 @@ function _buildEndpoint(region) {
 
 const endpoint = S3_CONFIG.endpoint || _buildEndpoint(S3_CONFIG.region);
 
-const client = new S3Client({
-  region: S3_CONFIG.region,
-  endpoint,
-  // KS3 требует virtual-hosted style (bucket.endpoint/key).
-  forcePathStyle: false,
-  credentials: {
-    accessKeyId: S3_CONFIG.accessKeyId,
-    secretAccessKey: S3_CONFIG.secretAccessKey,
-  },
-  // HTTP keep-alive ускоряет серию запросов к хранилищу.
-  requestHandler: {
-    requestTimeout: 300000,
-    httpsAgent: { maxSockets: 50, keepAlive: true },
-  },
-});
+function _createClient(endpointHost) {
+  return new S3Client({
+    region: S3_CONFIG.region,
+    endpoint: endpointHost,
+    // KS3 требует virtual-hosted style (bucket.endpoint/key).
+    forcePathStyle: false,
+    credentials: {
+      accessKeyId: S3_CONFIG.accessKeyId,
+      secretAccessKey: S3_CONFIG.secretAccessKey,
+    },
+    // HTTP keep-alive ускоряет серию запросов к хранилищу.
+    requestHandler: {
+      requestTimeout: 300000,
+      httpsAgent: { maxSockets: 50, keepAlive: true },
+    },
+  });
+}
+
+const client = _createClient(endpoint);
+
+// ------------------------------------------------------------
+// Внутренний endpoint (内网域名) — для серверных операций с данными.
+//
+// Если сервер — KEC-инстанс Kingsoft Cloud в том же регионе, что и
+// бакет, внутрисетевой трафик KS3 бесплатен (платятся только запросы).
+// Включается переменной KS3_USE_INTERNAL=true. Внутренний endpoint
+// строится автоматически из публичного (…ksyuncs.com → …-internal.ksyuncs.com)
+// либо задаётся явно через KS3_INTERNAL_ENDPOINT.
+// ------------------------------------------------------------
+const KS3_USE_INTERNAL = process.env.KS3_USE_INTERNAL === 'true';
+const internalEndpoint =
+  process.env.KS3_INTERNAL_ENDPOINT ||
+  (endpoint.includes('.ksyuncs.com')
+    ? endpoint.replace('.ksyuncs.com', '-internal.ksyuncs.com')
+    : null);
+const internalClient =
+  KS3_USE_INTERNAL && internalEndpoint ? _createClient(internalEndpoint) : null;
+
+/** Клиент для серверных операций с данными (внутренний, если включён). */
+function _dataClient() {
+  return internalClient || client;
+}
 
 function getBucket() {
   return S3_CONFIG.bucket;
@@ -149,7 +176,7 @@ async function _saveFileOnce(key, body, mimeType) {
   if (body.length > 5 * 1024 * 1024) {
     // Multipart upload для больших файлов.
     const upload = new Upload({
-      client,
+      client: _dataClient(),
       params: {
         Bucket: S3_CONFIG.bucket,
         Key: key,
@@ -182,7 +209,7 @@ async function _saveFileOnce(key, body, mimeType) {
       }, uploadTimeout);
     });
 
-    await Promise.race([client.send(command), timeoutPromise]);
+    await Promise.race([_dataClient().send(command), timeoutPromise]);
   }
 
   return {
@@ -208,7 +235,7 @@ async function getFile(key) {
       Key: key,
     });
 
-    const response = await client.send(command);
+    const response = await _dataClient().send(command);
     const chunks = [];
     for await (const chunk of response.Body) {
       chunks.push(chunk);
@@ -226,7 +253,7 @@ async function getFileStream(key, range = null) {
   logger.debug(`S3 download stream key: ${key}`);
 
   try {
-    const url = await getPresignedUrl(key, 300);
+    const url = await _serverPresignedUrl('GET', key, 300);
     const fetchHeaders = {};
     if (range) {
       fetchHeaders.Range = range;
@@ -266,9 +293,21 @@ async function getFileStream(key, range = null) {
 /**
  * Построить виртуальный host для bucket (KS3 third-level domain).
  */
-function _bucketHost() {
-  const endpointUrl = new URL(endpoint);
+function _bucketHost(endpointHost = endpoint) {
+  const endpointUrl = new URL(endpointHost);
   return `${S3_CONFIG.bucket}.${endpointUrl.host}`;
+}
+
+/**
+ * Presigned URL для серверного доступа к объекту.
+ * Использует внутренний endpoint (бесплатный трафик), если он включён,
+ * иначе — публичный.
+ */
+function _serverPresignedUrl(method, key, expires) {
+  const host = internalClient
+    ? _bucketHost(internalEndpoint)
+    : _bucketHost(endpoint);
+  return _ks3PresignedUrl(method, key, expires, host);
 }
 
 /**
@@ -278,8 +317,7 @@ function _bucketHost() {
  * X-Amz-Content-Sha256), которые KS3 не принимает. aws4 формирует
  * чистую AWS4-подпись, совместимую с KS3.
  */
-function _ks3PresignedUrl(method, key, expires = 3600) {
-  const host = _bucketHost();
+function _ks3PresignedUrl(method, key, expires = 3600, host = _bucketHost()) {
   const encodedKey = key.split('/').map(encodeURIComponent).join('/');
   const opts = {
     host,
@@ -334,7 +372,7 @@ async function listFiles() {
       Bucket: S3_CONFIG.bucket,
     });
 
-    const data = await client.send(command);
+    const data = await _dataClient().send(command);
     const files = data.Contents || [];
 
     return files.map((file) => ({
@@ -358,7 +396,7 @@ async function deleteFile(key) {
       Key: key,
     });
 
-    await client.send(command);
+    await _dataClient().send(command);
     return true;
   } catch (error) {
     logger.error(`Failed to delete from S3: ${error.message}`);
@@ -374,7 +412,7 @@ async function checkBucket() {
       Bucket: S3_CONFIG.bucket,
     });
 
-    await client.send(command);
+    await _dataClient().send(command);
     logger.info(`S3 bucket accessible: ${S3_CONFIG.bucket}`);
     return true;
   } catch (error) {
@@ -402,7 +440,7 @@ async function ensureBucketCors() {
       },
     });
 
-    await client.send(command);
+    await _dataClient().send(command);
     logger.info('S3 bucket CORS configured');
     return true;
   } catch (error) {
