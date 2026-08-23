@@ -297,12 +297,12 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .attention-answer { color: #f69a15; }');
   buf.push('    .lightbox-question { font-weight: bold; font-size: 16px; margin-bottom: 5px; }');
   buf.push('    .lightbox-answer { font-size: 14px; }');
-  buf.push('    .lightbox-image-container { position: relative; width: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; touch-action: none; }');
+  buf.push('    .lightbox-image-container { position: relative; width: 100%; height: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; touch-action: none; }');
   buf.push('    .lightbox-image-container.dragging { cursor: grabbing; }');
   buf.push('    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; }');
   buf.push('    .lightbox-thumbnails-bar { position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 10px 15px; border-radius: 8px; max-width: 80%; overflow: hidden; z-index: 10001; }');
-  buf.push('    @media (max-width: 1000px) { .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } .lightbox-image-container { width: 90%; } }');
-  buf.push('    @media (max-width: 768px) { .lightbox-info { left: 20px; right: 20px; top: 60px; bottom: auto; max-width: none; max-height: 100px; } .lightbox-image-container { position: relative; width: calc(100% - 40px); height: calc(100vh - 290px); } .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } .lightbox-thumbnails-bar { bottom: 120px; } }');
+  buf.push('    @media (max-width: 1000px) { .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } }');
+  buf.push('    @media (max-width: 768px) { .lightbox-info { left: 20px; right: 20px; top: 60px; bottom: auto; max-width: none; max-height: 100px; } .lightbox-nav.prev { left: 20px; } .lightbox-nav.next { right: 20px; } .lightbox-thumbnails-bar { bottom: 10px; } }');
   buf.push('    .thumbnails-container { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.5) rgba(0,0,0,0.3); }');
   buf.push('    .thumbnails-container::-webkit-scrollbar { height: 6px; }');
   buf.push('    .thumbnails-container::-webkit-scrollbar-track { background: rgba(255,255,255,0.1); border-radius: 3px; }');
@@ -501,7 +501,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('<script>');
   buf.push('    let currentIndex = 0;');
   buf.push('    let media = [];');
-  buf.push('    let scale = 1;');
+  buf.push('    let scale = 0.9;');
   buf.push('    let panX = 0;');
   buf.push('    let panY = 0;');
   buf.push('    let isDragging = false;');
@@ -628,7 +628,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
   buf.push('    function zoomIn() { scale = Math.min(scale * 1.2, 5); applyTransform(); }');
   buf.push('    function zoomOut() { scale = Math.max(scale / 1.2, 0.5); applyTransform(); }');
-  buf.push('    function resetZoom() { scale = 1; panX = 0; panY = 0; applyTransform(); }');
+  buf.push('    function resetZoom() { scale = 0.9; panX = 0; panY = 0; applyTransform(); }');
 
   buf.push('    function applyTransform() {');
   buf.push('      const imgEl = document.getElementById("lightbox-img");');
