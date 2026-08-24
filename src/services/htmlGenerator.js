@@ -330,19 +330,29 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Gallery
   buf.push('    .gallery-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: none; flex-direction: column; z-index: 9998; }');
   buf.push('    .gallery-overlay.active { display: flex; }');
-  buf.push('    .gallery-close { position: absolute; top: 20px; right: 20px; background: none; border: none; color: white; font-size: 32px; cursor: pointer; z-index: 10002; }');
-  buf.push('    .gallery-container { flex: 1; overflow-y: auto; padding: 80px 20px 20px; }');
-  buf.push('    .gallery-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; max-width: 1400px; margin: 0 auto; }');
-  buf.push('    .gallery-item { aspect-ratio: 1; overflow: hidden; border-radius: 8px; cursor: pointer; transition: transform 0.2s; }');
+  buf.push('    .gallery-close { position: absolute; top: 16px; right: 16px; background: rgba(255,255,255,0.15); backdrop-filter: blur(2px); border: none; color: white; width: 40px; height: 40px; border-radius: 50%; font-size: 26px; line-height: 1; cursor: pointer; z-index: 10002; display: inline-flex; align-items: center; justify-content: center; }');
+  buf.push('    .gallery-close:hover { background: rgba(255,255,255,0.3); }');
+  buf.push('    .gallery-container { flex: 1; overflow-y: auto; padding: 72px 24px 28px; -webkit-overflow-scrolling: touch; }');
+  buf.push('    .gallery-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1400px; margin: 0 auto; }');
+  buf.push('    .gallery-item { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 10px; cursor: pointer; transition: transform 0.2s; background: #222; }');
   buf.push('    .gallery-item:hover { transform: scale(1.02); }');
-  buf.push('    .gallery-item img { width: 100%; height: 100%; object-fit: cover; }');
+  buf.push('    .gallery-item img { display: block; width: 100%; height: 100%; object-fit: cover; }');
+  buf.push('    .gallery-video-badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.6); color: white; font-size: 11px; padding: 3px 8px; border-radius: 999px; line-height: 1; }');
   buf.push('    @media (max-width: 1200px) { .gallery-grid { grid-template-columns: repeat(3, 1fr); } }');
-  buf.push('    @media (max-width: 900px) { .gallery-grid { grid-template-columns: repeat(2, 1fr); } }');
-  buf.push('    @media (max-width: 600px) { .gallery-grid { grid-template-columns: 1fr; } }');
+  buf.push('    @media (max-width: 900px)  { .gallery-grid { grid-template-columns: repeat(2, 1fr); } }');
+  // На телефоне (<=600px) — ДВА ряда (repeat(2, 1fr)) и уменьшенные отступы/gap.
+  buf.push('    @media (max-width: 600px) {');
+  buf.push('      .gallery-container { padding: 56px 12px 24px; }');
+  buf.push('      .gallery-close { top: 10px; right: 10px; width: 36px; height: 36px; font-size: 22px; }');
+  buf.push('      .gallery-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }');
+  buf.push('      .gallery-item { border-radius: 8px; }');
+  buf.push('      .gallery-video-badge { font-size: 10px; padding: 2px 6px; }');
+  buf.push('    }');
   buf.push('    .gallery-section { margin-bottom: 30px; display: grid; grid-template-columns: inherit; }');
   buf.push('    .gallery-section-header { grid-column: 1 / -1; color: white; padding: 15px 20px; border-radius: 8px; margin-bottom: 15px; font-size: 16px; font-weight: 600; }');
   buf.push('    .gallery-section-header .question { font-size: 14px; opacity: 0.9; margin-bottom: 5px; }');
   buf.push('    .gallery-section-header .answer { font-size: 18px; font-weight: 700; }');
+  buf.push('    @media (max-width: 600px) { .gallery-section { margin-bottom: 20px; } .gallery-section-header { padding: 12px 14px; font-size: 14px; margin-bottom: 10px; } .gallery-section-header .answer { font-size: 16px; } }');
   // Header
   buf.push('    .header-row { background: #ffffff !important; color: #6c757d; text-align: left; }');
   buf.push('    .title { font-weight: bold; font-size: 22px; }');
@@ -807,21 +817,23 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        group.items.forEach((m) => {');
   buf.push('          const galleryItem = document.createElement("div");');
   buf.push('          galleryItem.className = "gallery-item";');
+  buf.push('          const img = document.createElement("img");');
+  // Для видео: показываем реальное превью (thumb). Если thumb отсутствует
+  // или совпадает с полным URL (нет отдельной миниатюры) — используем
+  // SVG-заглушку с плёнкой (показывает, что это видео, но не перекрывает
+  // полезную площадь миниатюры).
   buf.push('          if (m.type === "video") {');
-  buf.push('            const videoWrapper = document.createElement("div");');
-  buf.push('            videoWrapper.style.cssText = "position:relative;width:100%;height:100%;";');
-  buf.push('            const img = document.createElement("img");');
-  buf.push('            img.src = m.thumb && m.thumb !== m.src ? m.thumb : "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%25%22 height=%22100%25%22 viewBox=%220 0 200 200%22><rect fill=%22%23e0e0e0%22 width=%22200%22 height=%22200%22/><text x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dominant-baseline=%22middle%22 font-size=%2260%22>🎬</text></svg>";');
-  buf.push('            img.style.cssText = "width:100%;height:100%;object-fit:cover;";');
+  buf.push('            const hasThumb = m.thumb && m.thumb !== m.src;');
+  buf.push('            if (hasThumb) { img.src = m.thumb; }');
+  buf.push('            else { img.src = "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22 preserveAspectRatio=%22none%22><defs><linearGradient id=%22g%22 x1=%220%22 y1=%220%22 x2=%221%22 y2=%221%22><stop offset=%220%25%22 stop-color=%22%23475569%22/><stop offset=%22100%25%22 stop-color=%22%230f172a%22/></linearGradient></defs><rect fill=%22url(%23g)%22 width=%22100%22 height=%22100%22/><circle cx=%2250%22 cy=%2250%22 r=%2222%22 fill=%22rgba(0,0,0,0.45)%22/><polygon points=%2243,38 43,62 62,50%22 fill=%22white%22/></svg>";');
+  buf.push('            }');
   buf.push('            img.alt = m.question || "Video";');
-  buf.push('            const playIcon = document.createElement("div");');
-  buf.push('            playIcon.style.cssText = "position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:50px;height:50px;background:rgba(0,0,0,0.6);border-radius:50%;display:flex;align-items:center;justify-content:center;pointer-events:none;";');
-  buf.push('            playIcon.innerHTML = \'<div style="width:0;height:0;border-left:18px solid white;border-top:10px solid transparent;border-bottom:10px solid transparent;margin-left:4px;"></div>\';');
-  buf.push('            videoWrapper.appendChild(img);');
-  buf.push('            videoWrapper.appendChild(playIcon);');
-  buf.push('            galleryItem.appendChild(videoWrapper);');
+  buf.push('            const badge = document.createElement("div");');
+  buf.push('            badge.className = "gallery-video-badge";');
+  buf.push('            badge.textContent = "VIDEO";');
+  buf.push('            galleryItem.appendChild(img);');
+  buf.push('            galleryItem.appendChild(badge);');
   buf.push('          } else {');
-  buf.push('            const img = document.createElement("img");');
   buf.push('            img.src = m.thumb || m.src;');
   buf.push('            img.alt = m.question || "Photo";');
   buf.push('            galleryItem.appendChild(img);');
