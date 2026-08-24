@@ -20,9 +20,13 @@ const logger = require('../utils/logger');
  * Сгенерировать ZIP-архив отчёта.
  *
  * @param {object} report - объект отчёта из reportsService.getReportForView
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeJson=true] — включать ли в архив report.json
+ *   (полные данные отчёта). Для view-only share-ссылок передают `false`.
  * @returns {Promise<{buffer: Buffer, fileName: string}>}
  */
-async function generateReportZip(report) {
+async function generateReportZip(report, opts = {}) {
+  const includeJson = opts.includeJson !== false;
   const reportData = report.reportData;
   if (!reportData) {
     const err = new Error('Report has no data');
@@ -76,10 +80,13 @@ async function generateReportZip(report) {
     archive.on('warning', (warn) => logger.warn(`ZIP warning: ${warn.message}`));
     archive.on('error', (err) => reject(err));
 
-    // JSON отчёта.
-    archive.append(Buffer.from(JSON.stringify(reportData, null, 2), 'utf-8'), {
-      name: 'report.json',
-    });
+    // JSON отчёта (только для edit/full доступа; для view-only — не включаем,
+    // чтобы не раздавать исходные редактируемые данные без права редактирования).
+    if (includeJson) {
+      archive.append(Buffer.from(JSON.stringify(reportData, null, 2), 'utf-8'), {
+        name: 'report.json',
+      });
+    }
 
     // HTML для просмотра.
     archive.append(Buffer.from(html, 'utf-8'), {

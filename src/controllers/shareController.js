@@ -266,7 +266,11 @@ async function getSharedWelcomeHtml(request, reply) {
 
 /**
  * GET /reports/shares/:token/zip
- * ZIP-архив отчёта (JSON + медиа + HTML) для офлайн-работы.
+ * ZIP-архив отчёта для офлайн-работы.
+ *
+ * - Для view-only ссылок: HTML + медиа (без report.json, чтобы не раздавать
+ *   исходные редактируемые данные без права редактирования).
+ * - Для edit/full ссылок: добавляется report.json.
  */
 async function downloadSharedReportZip(request, reply) {
   const { token } = request.params;
@@ -279,7 +283,10 @@ async function downloadSharedReportZip(request, reply) {
       return reply.status(403).send({ success: false, error: 'Forbidden' });
     }
 
-    const { buffer, fileName } = await zipService.generateReportZip(report);
+    const includeJson = share.permissions !== 'view';
+    const { buffer, fileName } = await zipService.generateReportZip(report, {
+      includeJson,
+    });
 
     await shareService.logShareAccess({
       shareId: share.id,
