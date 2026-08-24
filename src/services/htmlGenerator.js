@@ -258,11 +258,11 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
   // === HTML HEAD + CSS ===
   buf.push('<!DOCTYPE html>');
-  buf.push('<html lang="ru">');
+  buf.push('<html>');
   buf.push('<head>');
   buf.push('  <meta charset="UTF-8">');
   buf.push('  <meta name="viewport" content="width=device-width, initial-scale=1.0">');
-  buf.push(`  <title>${reportName} - Excel таблица</title>`);
+  buf.push(`  <title data-i18n-title="${escapeHtml(reportName)}">${escapeHtml(reportName)} - Отчёт</title>`);
   buf.push('  <style>');
   buf.push('    * { margin: 0; padding: 0; box-sizing: border-box; }');
   buf.push('    body { font-family: \'Segoe UI\', \'Calibri\', \'Arial\', sans-serif; background: #e9e9e9; }');
@@ -348,11 +348,16 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .title { font-weight: bold; font-size: 22px; }');
   buf.push('    .border-bold { border-bottom: 2px solid #6c757d !important; font-size: 22px; }');
   buf.push('    .no-border { border-bottom: none !important; font-size: 18px; }');
+  // === i18n UI-lang switcher + lightbox UI-strings styles (shared bootstrap) ===
+  buf.push(_ui18nInject('css'));
+  buf.push('    .ui-lang-wrap { display: flex; justify-content: flex-end; margin: 6px 16px -2px 0; }');
   buf.push('  </style>');
   buf.push('</head>');
   buf.push('<body>');
+  // === UI Language switcher (share UI — RU/EN/ZH) — отдельно от переключателя контента.
+  buf.push('<div class="ui-lang-wrap"><div id="ui-lang-switcher"></div></div>');
 
-  // === Language switcher ===
+  // === Content language switcher (question/answer languages) ===
   buf.push('<div class="language-switcher">');
   for (let li = 0; li < languages.length; li++) {
     const lang = languages[li];
@@ -373,8 +378,10 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      <td class="border-bold"></td>');
   buf.push(`      <td class="title border-bold">${escapeHtml(reportData.productType ?? '')}</td>`);
   buf.push('      <td class="border-bold"></td>');
-  buf.push('      <td class="border-bold">Фабрика</td>');
-  buf.push('      <td class="border-bold">Модель</td>');
+  // UI-локализованные статические заголовки Excel (Фабрика/Модель/ФОТО) —
+  // подменяются JS при загрузке и смене языка интерфейса.
+  buf.push('      <td class="border-bold" data-i18n="excel_factory">Фабрика</td>');
+  buf.push('      <td class="border-bold" data-i18n="excel_model">Модель</td>');
   buf.push('    </tr>');
   buf.push('    <tr class="header-row">');
   buf.push('      <td class="no-border"></td>');
@@ -384,7 +391,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push(`      <td class="no-border">${escapeHtml(reportData.model ?? '')}</td>`);
   buf.push('    </tr>');
   buf.push('    <tr class="header-row">');
-  buf.push('      <td colspan="5" style="text-align:left; font-weight:bold; padding:8px; color:#6c757d; border-bottom:none;">ФОТО</td>');
+  buf.push('      <td colspan="5" style="text-align:left; font-weight:bold; padding:8px; color:#6c757d; border-bottom:none;" data-i18n="excel_photoSection">ФОТО</td>');
   buf.push('    </tr>');
   buf.push('    <tr>');
   buf.push(`      <th colspan="5">${reportName} | ${dateTime}</th>`);
@@ -484,31 +491,31 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('  <div class="lightbox" id="lightbox">');
   buf.push('    <div class="lightbox-topbar">');
   // Слева — кнопка-глаз: переключает режим скрытия UI.
-  buf.push('      <button class="lightbox-ui-btn" id="lightbox-ui-toggle" onclick="toggleUiVisibility()" title="Скрыть/показать элементы управления">');
+  buf.push('      <button class="lightbox-ui-btn" id="lightbox-ui-toggle" onclick="toggleUiVisibility()" data-i18n-title="lb_toggleUi" title="Скрыть/показать элементы управления">');
   buf.push('        <span id="lightbox-eye-icon" style="display:inline-flex;align-items:center;justify-content:center;"></span>');
   buf.push('      </button>');
   buf.push('      <div class="spacer hide-with-ui"></div>');
   // Центр — зум-контролы.
   buf.push('      <div class="lightbox-controls hide-with-ui">');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomIn()" title="Увеличить">+</button>');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomOut()" title="Уменьшить">−</button>');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="resetZoom()" title="Сбросить масштаб">100%</button>');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomIn()" data-i18n-title="lb_zoomIn" title="Увеличить">+</button>');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomOut()" data-i18n-title="lb_zoomOut" title="Уменьшить">−</button>');
+  buf.push('        <button class="lightbox-ui-btn small" onclick="resetZoom()" data-i18n-title="lb_resetZoom" title="Сбросить масштаб">100%</button>');
   buf.push('      </div>');
   buf.push('      <div class="spacer hide-with-ui"></div>');
   // Справа — сетка и закрыть.
-  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="openGallery()" title="Просмотр сеткой">⊞</button>');
-  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="closeLightbox()" title="Закрыть">×</button>');
+  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="openGallery()" data-i18n-title="lb_gallery" title="Просмотр сеткой">⊞</button>');
+  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="closeLightbox()" data-i18n-title="lb_close" title="Закрыть">×</button>');
   buf.push('    </div>');
   buf.push('    <div class="lightbox-info">');
   buf.push('      <div class="lightbox-question" id="lightbox-question"></div>');
   buf.push('      <div class="lightbox-answer" id="lightbox-answer"></div>');
   buf.push('    </div>');
-  buf.push('    <button class="lightbox-nav prev" onclick="prevMedia()" title="Предыдущее">←</button>');
+  buf.push('    <button class="lightbox-nav prev" onclick="prevMedia()" data-i18n-title="lb_prev" title="Предыдущее">←</button>');
   buf.push('    <div class="lightbox-image-container" id="lightbox-container">');
   buf.push('      <img id="lightbox-img" src="" alt="" style="display:none;" />');
   buf.push('      <video id="lightbox-video" controls autoplay playsinline style="display:none;max-width:100%;max-height:100%;object-fit:contain;"></video>');
   buf.push('    </div>');
-  buf.push('    <button class="lightbox-nav next" onclick="nextMedia()" title="Следующее">→</button>');
+  buf.push('    <button class="lightbox-nav next" onclick="nextMedia()" data-i18n-title="lb_next" title="Следующее">→</button>');
   buf.push('    <div class="lightbox-thumbnails-bar" id="lightbox-thumbnails-bar">');
   buf.push('      <div class="thumbnails-container" id="thumbnails-container"></div>');
   buf.push('    </div>');
@@ -516,7 +523,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
   // === Gallery overlay ===
   buf.push('  <div class="gallery-overlay" id="gallery-overlay">');
-  buf.push('    <button class="gallery-close" onclick="closeGallery()">×</button>');
+  buf.push('    <button class="gallery-close" onclick="closeGallery()" data-i18n-title="lb_galleryClose" title="Закрыть галерею">×</button>');
   buf.push('    <div class="gallery-container" id="gallery-container">');
   buf.push('      <div class="gallery-grid" id="gallery-grid"></div>');
   buf.push('    </div>');
@@ -524,6 +531,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
 
   // === JavaScript ===
   buf.push('<script>');
+  buf.push('    ' + _ui18nInject('script'));
   buf.push('    let currentIndex = 0;');
   buf.push('    let media = [];');
   buf.push('    let scale = 0.9;');
@@ -540,6 +548,32 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    let startPinchMidY = 0;');
   buf.push(`    const allLanguages = ${JSON.stringify(languages)};`);
   buf.push('    let currentLanguage = 0;');
+
+  // === UI i18n renderer: применяет переводы к data-i18n / data-i18n-title / title ===
+  buf.push('    window.__renderAll = function() {');
+  buf.push('      // 1) Все элементы с data-i18n — локализовать innerText.');
+  buf.push('      document.querySelectorAll("[data-i18n]").forEach(function(el) { var k = el.getAttribute("data-i18n"); el.innerText = window.__(k); });');
+  buf.push('      // 2) Все элементы с data-i18n-title — локализовать title (tooltip).');
+  buf.push('      document.querySelectorAll("[data-i18n-title]").forEach(function(el) {');
+  buf.push('        var k = el.getAttribute("data-i18n-title"); var t = window.__(k);');
+  buf.push('        if (!t || t === k) return; // fallback: оставить исходный title (RU)');
+  buf.push('        el.setAttribute("title", t);');
+  buf.push('      });');
+  buf.push('      // 3) document.title = reportName + " — Отчёт" (с локализацией суффикса).');
+  buf.push('      var ttlEl = document.querySelector("title[data-i18n-title]");');
+  buf.push('      if (ttlEl) {');
+  buf.push('        var rptName = ttlEl.getAttribute("data-i18n-title");');
+  buf.push('        document.title = rptName + window.__("excel_suffixTitle");');
+  buf.push('      }');
+  buf.push('      // 4) Перерисовать UI-переключатель (чтобы active-state совпадал).');
+  buf.push('      window.__renderLangSwitcher && window.__renderLangSwitcher("ui-lang-switcher");');
+  buf.push('      // 5) Обновить <html lang="">.');
+  buf.push('      try { document.documentElement.lang = window.__etLang || "ru"; } catch(e){}');
+  buf.push('    };');
+  buf.push('    document.addEventListener("DOMContentLoaded", function() {');
+  buf.push('      window.__renderLangSwitcher && window.__renderLangSwitcher("ui-lang-switcher");');
+  buf.push('      window.__renderAll();');
+  buf.push('    });');
 
   buf.push('    function switchLanguage(li) {');
   buf.push('      document.querySelectorAll(".lang-btn").forEach(btn => btn.classList.remove("active"));');
@@ -763,11 +797,11 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        header.className = "gallery-section-header";');
   buf.push('        const questionDiv = document.createElement("div");');
   buf.push('        questionDiv.className = "question";');
-  buf.push('        questionDiv.textContent = group.question || "Без вопроса";');
+  buf.push('        questionDiv.textContent = group.question || window.__("lb_noQuestion");');
   buf.push('        header.appendChild(questionDiv);');
   buf.push('        const answerDiv = document.createElement("div");');
   buf.push('        answerDiv.className = "answer";');
-  buf.push('        answerDiv.textContent = group.answer || "Без ответа";');
+  buf.push('        answerDiv.textContent = group.answer || window.__("lb_noAnswer");');
   buf.push('        header.appendChild(answerDiv);');
   buf.push('        section.appendChild(header);');
   buf.push('        group.items.forEach((m) => {');
@@ -818,6 +852,251 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('</html>');
 
   return buf.join('\n');
+}
+
+// ------------------------------------------------------------
+// i18n: локализация UI для share-страниц (welcome + HTML view).
+//
+// Принцип: в каждую HTML-страницу вшивается маленький JS-блок
+// (функции `__ui18nBootstrap` / `__` / `__setLang` / `__renderLangSwitcher`
+// + словарь STRINGS на 3 языка). Язык определяется из:
+//   1) ?lang= query-параметр (ru|en|zh)
+//   2) localStorage 'et.lang'
+//   3) navigator.language (браузер)
+//   4) fallback 'ru'
+// ------------------------------------------------------------
+
+const UI_LANGS = [
+  { code: 'ru', label: 'RU' },
+  { code: 'en', label: 'EN' },
+  { code: 'zh', label: '中文' },
+];
+
+// Общий словарь UI-строк (ключ → { ru/en/zh }).
+const UI_STRINGS = {
+  // ===== SHARE WELCOME =====
+  welcome_noName: {
+    ru: 'Без названия',
+    en: 'Untitled',
+    zh: '未命名',
+  },
+  welcome_editAccess: {
+    ru: 'Доступ на редактирование',
+    en: 'Editing access',
+    zh: '可编辑权限',
+  },
+  welcome_viewOnlyAccess: {
+    ru: 'Доступ только для просмотра',
+    en: 'View-only access',
+    zh: '仅查看权限',
+  },
+  welcome_validUntil: {
+    ru: 'Ссылка действительна до',
+    en: 'Link valid until',
+    zh: '链接有效期至',
+  },
+  welcome_viewOnlyWarning: {
+    ru: 'Эта ссылка открыта только для просмотра. Редактирование недоступно.',
+    en: 'This link is view-only. Editing is disabled.',
+    zh: '此链接仅供查看，无法编辑。',
+  },
+  welcome_openHtml: {
+    ru: 'Просмотр',
+    en: 'View',
+    zh: '查看',
+  },
+  welcome_openHtmlDesc: {
+    ru: 'Открыть отчёт в лёгкой HTML версии',
+    en: 'Open the report in a lightweight HTML view',
+    zh: '打开精简 HTML 版报告',
+  },
+  welcome_edit: {
+    ru: 'Редактировать',
+    en: 'Edit',
+    zh: '编辑',
+  },
+  welcome_editDesc: {
+    ru: 'Редактировать отчёт в браузере',
+    en: 'Edit the report in the browser',
+    zh: '在浏览器中编辑报告',
+  },
+  welcome_zip: {
+    ru: 'Скачать ZIP',
+    en: 'Download ZIP',
+    zh: '下载 ZIP',
+  },
+  welcome_zipDesc: {
+    ru: 'Офлайн-копия отчёта',
+    en: 'Offline copy of the report',
+    zh: '离线副本报告',
+  },
+  welcome_langLabel: {
+    ru: 'Язык',
+    en: 'Language',
+    zh: '语言',
+  },
+
+  // ===== EXCEL HEADER CELLS =====
+  excel_suffixTitle: {
+    ru: ' - Отчёт',
+    en: ' - Report',
+    zh: ' - 报告',
+  },
+  excel_factory: {
+    ru: 'Фабрика',
+    en: 'Factory',
+    zh: '工厂',
+  },
+  excel_model: {
+    ru: 'Модель',
+    en: 'Model',
+    zh: '型号',
+  },
+  excel_photoSection: {
+    ru: 'ФОТО',
+    en: 'PHOTOS',
+    zh: '照片',
+  },
+
+  // ===== LIGHTBOX =====
+  lb_toggleUi: {
+    ru: 'Скрыть/показать элементы управления',
+    en: 'Hide/show controls',
+    zh: '隐藏/显示控件',
+  },
+  lb_zoomIn: {
+    ru: 'Увеличить',
+    en: 'Zoom in',
+    zh: '放大',
+  },
+  lb_zoomOut: {
+    ru: 'Уменьшить',
+    en: 'Zoom out',
+    zh: '缩小',
+  },
+  lb_resetZoom: {
+    ru: 'Сбросить масштаб',
+    en: 'Reset zoom',
+    zh: '重置缩放',
+  },
+  lb_gallery: {
+    ru: 'Просмотр сеткой',
+    en: 'Grid view',
+    zh: '网格视图',
+  },
+  lb_close: {
+    ru: 'Закрыть',
+    en: 'Close',
+    zh: '关闭',
+  },
+  lb_prev: {
+    ru: 'Предыдущее',
+    en: 'Previous',
+    zh: '上一个',
+  },
+  lb_next: {
+    ru: 'Следующее',
+    en: 'Next',
+    zh: '下一个',
+  },
+  lb_noQuestion: {
+    ru: 'Без вопроса',
+    en: 'No question',
+    zh: '无问题',
+  },
+  lb_noAnswer: {
+    ru: 'Без ответа',
+    en: 'No answer',
+    zh: '无答案',
+  },
+  lb_galleryClose: {
+    ru: 'Закрыть галерею',
+    en: 'Close gallery',
+    zh: '关闭图库',
+  },
+
+  // ===== SHARE ERROR =====
+  err_titleForbidden: {
+    ru: 'Доступ запрещён',
+    en: 'Access denied',
+    zh: '禁止访问',
+  },
+  err_msgForbidden: {
+    ru: 'У вас нет прав на просмотр этой ссылки, либо она истекла.',
+    en: 'You do not have permission to view this link, or it has expired.',
+    zh: '您无权查看此链接，或者链接已过期。',
+  },
+  err_home: {
+    ru: 'На главную',
+    en: 'Go home',
+    zh: '返回首页',
+  },
+  err_generic: {
+    ru: 'Не удалось открыть страницу',
+    en: 'Failed to load the page',
+    zh: '无法加载页面',
+  },
+};
+
+/**
+ * Сгенерировать JS-код (bootstrap) i18n и вставить его в страницу.
+ * Дополнительно подключается CSS для переключателя языка.
+ *
+ * @param {'script'|'both'} [mode='script'] — только скрипт или скрипт+CSS.
+ */
+function _ui18nInject(mode = 'script') {
+  const lines = [];
+  if (mode === 'both' || mode === 'css') {
+    lines.push('    .ui-lang-switch { display: flex; align-items: center; gap: 6px; }');
+    lines.push('    .ui-lang-switch .lbl { font-size: 12px; color: #666; }');
+    lines.push('    .ui-lang-switch .lb { padding: 4px 10px; border: 1px solid #d1d5db; background: white; color: #424242; border-radius: 16px; cursor: pointer; font-size: 12px; line-height: 1; transition: all 0.15s; }');
+    lines.push('    .ui-lang-switch .lb.active { background: #00B0F0; color: white; border-color: #00B0F0; }');
+    lines.push('    .ui-lang-switch .lb:hover { opacity: 0.85; }');
+  }
+  if (mode === 'both' || mode === 'script') {
+    lines.push(`(function(){`);
+    lines.push(`  var L = ${JSON.stringify(UI_LANGS)};`);
+    lines.push(`  var S = ${JSON.stringify(UI_STRINGS)};`);
+    lines.push(`  var fallback = 'ru';`);
+    lines.push(`  var detect = function(){`);
+    lines.push(`    try {`);
+    lines.push(`      var q = (new URLSearchParams(window.location.search)).get('lang');`);
+    lines.push(`      if (q) { var m = L.find(function(x){return x.code===q.toLowerCase()}); if (m) return m.code; }`);
+    lines.push(`      var s = window.localStorage.getItem('et.lang');`);
+    lines.push(`      if (s) { var m2 = L.find(function(x){return x.code===s.toLowerCase()}); if (m2) return m2.code; }`);
+    lines.push(`      var nav = (window.navigator && (window.navigator.language || (window.navigator.languages&&window.navigator.languages[0]) || '')).toLowerCase();`);
+    lines.push(`      if (!nav) return fallback;`);
+    lines.push(`      if (nav.indexOf('zh')===0) return 'zh';`);
+    lines.push(`      if (nav.indexOf('ru')===0) return 'ru';`);
+    lines.push(`      if (nav.indexOf('en')===0) return 'en';`);
+    lines.push(`      return fallback;`);
+    lines.push(`    } catch(e) { return fallback; }`);
+    lines.push(`  };`);
+    lines.push(`  window.__etLang = detect();`);
+    lines.push(`  window.__ = function(k, vars){`);
+    lines.push(`    var lang = window.__etLang || fallback; var d = (S[k]||{}); var t = d[lang] != null ? d[lang] : (d[fallback] != null ? d[fallback] : k);`);
+    lines.push(`    if (vars && typeof vars === 'object') { Object.keys(vars).forEach(function(v){ t = String(t).replace(new RegExp('\\\\{'+v+'\\\\}','g'), String(vars[v])); }); }`);
+    lines.push(`    return t;`);
+    lines.push(`  };`);
+    lines.push(`  window.__setLang = function(code){`);
+    lines.push(`    var m = L.find(function(x){return x.code===code}); if (!m) return;`);
+    lines.push(`    window.__etLang = m.code;`);
+    lines.push(`    try { window.localStorage.setItem('et.lang', m.code); } catch(e){}`);
+    lines.push(`    window.dispatchEvent(new CustomEvent('et-lang-changed', { detail: { code: m.code } }));`);
+    lines.push(`    window.__renderAll?.(m.code);`);
+    lines.push(`    document.documentElement.lang = m.code;`);
+    lines.push(`    document.querySelectorAll('.ui-lang-switch .lb').forEach(function(b){ b.classList.toggle('active', b.dataset.code===m.code); });`);
+    lines.push(`  };`);
+    lines.push(`  window.__renderLangSwitcher = function(containerId, opts){`);
+    lines.push(`    opts = opts || {}; var c = document.getElementById(containerId); if (!c) return;`);
+    lines.push(`    c.innerHTML = ''; var wrap = document.createElement('div'); wrap.className = 'ui-lang-switch';`);
+    lines.push(`    if (opts.label) { var l = document.createElement('span'); l.className = 'lbl'; l.textContent = opts.labelText || ''; wrap.appendChild(l); }`);
+    lines.push(`    L.forEach(function(x){ var b = document.createElement('button'); b.type='button'; b.className='lb' + (window.__etLang===x.code?' active':''); b.dataset.code = x.code; b.textContent = x.label; b.onclick = function(){ window.__setLang(x.code); }; wrap.appendChild(b); });`);
+    lines.push(`    c.appendChild(wrap);`);
+    lines.push(`  };`);
+    lines.push(`})();`);
+  }
+  return lines.join('\n');
 }
 
 // ------------------------------------------------------------
@@ -931,21 +1210,24 @@ function mediaCellContent(ai, li, qIndex, allMediaByQandAandLang, questionNames,
  *   - «Скачать ZIP»               — /reports/shares/:token/zip
  *
  * Для view-only ссылок кнопка «Открыть веб-версию» не показывается.
+ * Все UI-строки (кроме названия отчёта) локализованы inline JS-словарем:
+ * RU / EN / ZH, выбор — по query `?lang=`, localStorage, или языку браузера.
  *
- * Безопасность: токен НЕ зашивается в HTML (он уже в URL, которым
- * поделились). Никаких секретов на страницу не попадает.
+ * Безопасность: токен НЕ зашивается в HTML (он уже в URL, которым поделились).
+ * Никаких секретов на страницу не попадает.
  *
  * @param {object} share  - объект share-ссылки ({token, permissions, expiresAt})
  * @param {object} report - объект отчёта ({title, reportData})
  * @param {string} baseUrl- базовый URL сервера (protocol://host)
- * @param {object} labels - локализованные подписи ({title, edit, view, zip, validUntil, viewOnly})
+ * @param {object} [labelsIgnored] — (для совместимости, больше не используется)
  */
-function generateWelcomeHtml(share, report, baseUrl, labels) {
+function generateWelcomeHtml(share, report, baseUrl, labelsIgnored) {
   const reportData = (report && report.reportData) || {};
-  const title = escapeHtml(reportData.reportName || report.title || labels.noName);
+  // Название отчёта НЕ локализуем — это пользовательские данные.
+  // Оно подставляется в JS-рендере с data-i18n-noescape-флагом.
+  const title = escapeHtml(reportData.reportName || report.title || '');
   const canEdit = share.permissions === 'edit';
 
-  const langCode = 'ru';
   // Кнопка «Открыть веб-версию» ведёт на /#/share-edit — маршрут, который
   // index.html НЕ перехватывает, поэтому грузится Flutter и сразу открывает
   // редактор отчёта (без welcome-экрана с кнопками).
@@ -953,59 +1235,36 @@ function generateWelcomeHtml(share, report, baseUrl, labels) {
   const htmlUrl = `${baseUrl}/reports/shares/${encodeURIComponent(share.token)}/html`;
   const zipUrl = `${baseUrl}/reports/shares/${encodeURIComponent(share.token)}/zip`;
 
-  let expiresLabel = '';
-  if (share.expiresAt) {
-    const d = new Date(share.expiresAt);
-    if (!Number.isNaN(d.getTime())) {
-      const day = String(d.getDate()).padStart(2, '0');
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const hour = String(d.getHours()).padStart(2, '0');
-      const minute = String(d.getMinutes()).padStart(2, '0');
-      expiresLabel = `${labels.validUntil} ${day}.${month}.${d.getFullYear()} ${hour}:${minute}`;
-    }
-  }
+  const expiresAtIso = share.expiresAt ? new Date(share.expiresAt).toISOString() : '';
 
-  const card = (icon, titleText, subtitle, href) => `
+  const card = (icon, titleKey, subtitleKey, href) => `
     <a href="${href}" class="action-card">
       <div class="action-icon">${icon}</div>
       <div class="action-text">
-        <div class="action-title">${escapeHtml(titleText)}</div>
-        <div class="action-subtitle">${escapeHtml(subtitle)}</div>
+        <div class="action-title" data-i18n="${titleKey}">${escapeHtml(titleKey)}</div>
+        <div class="action-subtitle" data-i18n="${subtitleKey}">${escapeHtml(subtitleKey)}</div>
       </div>
       <div class="action-arrow">›</div>
     </a>`;
 
   let actionsHtml = '';
   // 1. Просмотр (лёгкая HTML-версия).
-  actionsHtml += card(
-    '〈/〉',
-    labels.openHtmlTooltip,
-    labels.openHtmlDesc,
-    htmlUrl,
-  );
+  actionsHtml += card('〈/〉', 'welcome_openHtml', 'welcome_openHtmlDesc', htmlUrl);
   if (canEdit) {
     // 2. Редактировать (веб-версия).
-    actionsHtml += card(
-      '✎',
-      labels.openWebEditor,
-      labels.openWebEditorDesc,
-      editUrl,
-    );
-    // 3. Скачать ZIP для офлайн-работы.
-    actionsHtml += card(
-      '⇩',
-      labels.downloadZip,
-      labels.downloadZipDesc,
-      zipUrl,
-    );
+    actionsHtml += card('✎', 'welcome_edit', 'welcome_editDesc', editUrl);
   }
+  // 3. ZIP всегда доступен. Для view-only zipService автоматически опустит report.json.
+  actionsHtml += card('⇩', 'welcome_zip', 'welcome_zipDesc', zipUrl);
+
+  const eyeSvg = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 
   return `<!DOCTYPE html>
-<html lang="${langCode}">
+<html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title}</title>
+<title data-i18n-doc-title="${escapeHtml(title)}">${escapeHtml(title)}</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -1051,17 +1310,130 @@ function generateWelcomeHtml(share, report, baseUrl, labels) {
     padding: 12px 16px; font-size: 13px; color: #424242;
     margin-bottom: 20px; display: flex; gap: 12px; align-items: flex-start;
   }
+  .welcome-lang-wrap {
+    display: flex; justify-content: flex-end; margin: -12px 0 16px;
+  }
+${_ui18nInject('css')}
 </style>
 </head>
 <body>
   <div class="container">
-    <div class="icon-circle">${canEdit ? '✎' : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`}</div>
-    <h1>${title}</h1>
-    <div class="access-line">${escapeHtml(canEdit ? labels.editAccess : labels.viewOnlyAccess)}</div>
-    ${expiresLabel ? `<div class="expires-line">${escapeHtml(expiresLabel)}</div>` : ''}
-    ${canEdit ? '' : `<div class="view-only-banner"><span>🔒</span><span>${escapeHtml(labels.viewOnlyWarning)}</span></div>`}
+    <div class="welcome-lang-wrap"><div id="ui-lang-switcher"></div></div>
+    <div class="icon-circle">${canEdit ? '✎' : eyeSvg}</div>
+    <h1 id="welcome-report-title">${title}</h1>
+    <div class="access-line" data-i18n="${canEdit ? 'welcome_editAccess' : 'welcome_viewOnlyAccess'}">-</div>
+    ${expiresAtIso ? `<div class="expires-line" data-expires-iso="${escapeHtml(expiresAtIso)}" data-i18n-prefix="welcome_validUntil">-</div>` : ''}
+    ${canEdit ? '' : `<div class="view-only-banner"><span>🔒</span><span data-i18n="welcome_viewOnlyWarning">-</span></div>`}
     <div class="actions">${actionsHtml}</div>
   </div>
+<script>
+${_ui18nInject('script')}
+
+// === Welcome-page i18n renderer ===
+(function () {
+  function renderAll() {
+    // 1) Обычные data-i18n (тексты).
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+      var k = el.getAttribute('data-i18n'); el.textContent = window.__(k);
+    });
+    // 2) Expires-строка: "<validUntil>: 12.08.2026 14:30" — локализованное
+    //    форматирование даты через Intl.DateTimeFormat, префикс — из словаря.
+    var expEl = document.querySelector('[data-i18n-prefix="welcome_validUntil"]');
+    if (expEl) {
+      var iso = expEl.getAttribute('data-expires-iso');
+      var prefix = window.__('welcome_validUntil');
+      try {
+        var d = new Date(iso);
+        var lc = (window.__etLang === 'ru') ? 'ru-RU' : (window.__etLang === 'zh' ? 'zh-CN' : 'en-US');
+        var opts = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' };
+        expEl.textContent = prefix + ' ' + new Intl.DateTimeFormat(lc, opts).format(d);
+      } catch (err) { expEl.textContent = prefix + ' ' + iso; }
+    }
+    // 3) Заголовок/title документа.
+    var reportTitle = (document.getElementById('welcome-report-title') || {}).textContent || '';
+    if (reportTitle) { document.title = reportTitle; }
+    // 4) Переключатель языка.
+    window.__renderLangSwitcher && window.__renderLangSwitcher('ui-lang-switcher');
+    try { document.documentElement.lang = window.__etLang || 'ru'; } catch (err) {}
+  }
+  window.__renderAll = renderAll;
+  document.addEventListener('DOMContentLoaded', renderAll);
+  window.addEventListener('et-lang-changed', renderAll);
+})();
+</script>
+</body>
+</html>`;
+}
+
+// ------------------------------------------------------------
+// Share-страницы ошибок (403 / общая ошибка) — тоже i18n.
+// ------------------------------------------------------------
+
+/**
+ * Генерирует HTML для share-ошибки (403 Forbidden / expired / generic).
+ * Все строки локализованы (RU/EN/ZH). Детект языка и переключатель включены.
+ *
+ * @param {403|500} statusCode
+ * @param {string} [homeUrl='/'
+ */
+function generateShareErrorHtml(statusCode, homeUrl = '/') {
+  const isForbidden = statusCode === 403;
+  const titleKey = isForbidden ? 'err_titleForbidden' : 'err_generic';
+  const msgKey = isForbidden ? 'err_msgForbidden' : 'err_generic';
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title data-i18n-doc-title="${escapeHtml(titleKey)}">${escapeHtml(titleKey)}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f8f7f2; color: #424242;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card { width: 100%; max-width: 440px; background: #fff; border: 1px solid #e5e7eb;
+    border-radius: 16px; padding: 28px 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.04); }
+  .icon { width: 56px; height: 56px; margin: 0 auto 16px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; color: #fff;
+    background: ${isForbidden ? '#ef4444' : '#64748b'}; font-size: 24px; }
+  h1 { text-align: center; font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+  p { text-align: center; color: #6b7280; font-size: 14px; line-height: 1.45; margin-bottom: 20px; }
+  a.home-btn { display: inline-flex; align-items: center; justify-content: center;
+    width: 100%; padding: 12px 16px; border-radius: 10px; border: none;
+    background: #00B0F0; color: white; text-decoration: none; font-size: 14px; font-weight: 600; }
+  a.home-btn:hover { opacity: 0.9; }
+  .err-lang-wrap { display: flex; justify-content: flex-end; margin: -10px 0 14px; }
+${_ui18nInject('css')}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="err-lang-wrap"><div id="ui-lang-switcher"></div></div>
+    <div class="icon">${isForbidden ? '🔒' : '⚠️'}</div>
+    <h1 data-i18n="${titleKey}">-</h1>
+    <p data-i18n="${msgKey}">-</p>
+    <a href="${escapeHtml(homeUrl)}" class="home-btn" data-i18n="err_home">-</a>
+  </div>
+<script>
+${_ui18nInject('script')}
+(function(){
+  function renderAll(){
+    document.querySelectorAll('[data-i18n]').forEach(function(el){
+      var k = el.getAttribute('data-i18n'); el.textContent = window.__(k);
+    });
+    var ttl = document.querySelector('title[data-i18n-doc-title]');
+    if (ttl) { var k = ttl.getAttribute('data-i18n-doc-title'); document.title = window.__(k); }
+    window.__renderLangSwitcher && window.__renderLangSwitcher('ui-lang-switcher');
+    try { document.documentElement.lang = window.__etLang || 'ru'; } catch(e){}
+  }
+  window.__renderAll = renderAll;
+  document.addEventListener('DOMContentLoaded', renderAll);
+  window.addEventListener('et-lang-changed', renderAll);
+})();
+</script>
 </body>
 </html>`;
 }
@@ -1069,6 +1441,7 @@ function generateWelcomeHtml(share, report, baseUrl, labels) {
 module.exports = {
   generateReportHtml,
   generateWelcomeHtml,
+  generateShareErrorHtml,
   escapeHtml,
   escapeHtmlWithBr,
   sortLanguages,

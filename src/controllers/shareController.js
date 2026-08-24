@@ -18,7 +18,7 @@ const shareService = require('../services/shareService');
 const reportsService = require('../services/reportsService');
 const fileService = require('../services/fileService');
 const zipService = require('../services/zipService');
-const { generateWelcomeHtml } = require('../services/htmlGenerator');
+const { generateWelcomeHtml, generateShareErrorHtml } = require('../services/htmlGenerator');
 
 /**
  * POST /reports/:id/shares
@@ -228,24 +228,16 @@ async function getSharedWelcomeHtml(request, reply) {
     const { share, report } = await shareService.getReportByShareToken(token);
 
     if (!shareService.canView(share)) {
-      return reply.status(403).send({ success: false, error: 'Forbidden' });
+      return reply
+        .status(403)
+        .type('text/html')
+        .send(generateShareErrorHtml(403, `${request.protocol}://${request.host}/`));
     }
 
     const baseUrl = `${request.protocol}://${request.host}`;
-    const labels = {
-      noName: 'Без названия',
-      editAccess: 'Доступ на редактирование',
-      viewOnlyAccess: 'Доступ только для просмотра',
-      validUntil: 'Ссылка действительна до',
-      viewOnlyWarning: 'Эта ссылка открыта только для просмотра. Редактирование недоступно.',
-      openWebEditor: 'Редактировать',
-      openWebEditorDesc: 'Редактировать отчёт в браузере',
-      downloadZip: 'Скачать ZIP',
-      downloadZipDesc: 'Офлайн-копия отчёта',
-      openHtmlTooltip: 'Открыть HTML',
-      openHtmlDesc: 'Просмотреть отчёт в лёгкой версии',
-    };
-    const html = generateWelcomeHtml(share, report, baseUrl, labels);
+    // Все локализованные строки теперь генерируются inline в самом HTML
+    // через встроенный i18n-bootstrap — не передаём labels-объект.
+    const html = generateWelcomeHtml(share, report, baseUrl);
 
     await shareService.logShareAccess({
       shareId: share.id,
@@ -257,10 +249,17 @@ async function getSharedWelcomeHtml(request, reply) {
     return reply.type('text/html').send(html);
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({
-      success: false,
-      error: status >= 500 ? 'Failed to generate welcome page' : error.message,
-    });
+    // Для 4xx — HTML-страница с i18n (403 Forbidden), для 5xx — тоже HTML
+    // (иначе анонимный пользователь увидит голый JSON).
+    if (status >= 400 && status < 500) {
+      return reply
+        .status(status)
+        .type('text/html')
+        .send(generateShareErrorHtml(403, `${request.protocol}://${request.host}/`));
+    }
+    return reply.status(status).type('text/html').send(
+      generateShareErrorHtml(500, `${request.protocol}://${request.host}/`),
+    );
   }
 }
 
