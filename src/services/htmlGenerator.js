@@ -301,7 +301,7 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Кнопки-подсказки (zoom и сетка) исчезают в режиме «без UI» и в gallery-overlay нет.
   // Info-блок: прижат к левому краю (отступ 14px), ширина контента 500px max,
   // высота по контенту (height:auto; min/max-height). Чёрный фон — по ширине контента.
-  buf.push('    .lightbox-info { position: absolute; top: 60px; left: 14px; right: auto; transform: none; width: calc(100% - 28px); max-width: 500px; box-sizing: border-box; background: rgba(0,0,0,0.78); color: white; padding: 14px 18px; border-radius: 10px; overflow-y: auto; text-align: left; z-index: 10001; height: auto; min-height: 0; max-height: 36vh; line-height: 1.55; backdrop-filter: blur(3px); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }');
+  buf.push('    .lightbox-info { position: absolute; top: 60px; left: 14px; right: auto; transform: none; max-width: 500px; box-sizing: border-box; background: rgba(0,0,0,0.78); color: white; padding: 14px 18px; border-radius: 10px; overflow-y: auto; text-align: left; z-index: 10001; height: auto; min-height: 0; max-height: 36vh; line-height: 1.55; backdrop-filter: blur(3px); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }');
   buf.push('    .attention-answer { color: #f69a15; }');
   buf.push('    .lightbox-question { font-weight: 700; font-size: 15px; margin: 0 0 8px 0; line-height: 1.45; letter-spacing: 0.1px; }');
   buf.push('    .lightbox-answer { font-size: 14.5px; line-height: 1.6; margin: 0; }');
