@@ -333,26 +333,32 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .gallery-close { position: absolute; top: 16px; right: 16px; background: rgba(255,255,255,0.15); backdrop-filter: blur(2px); border: none; color: white; width: 40px; height: 40px; border-radius: 50%; font-size: 26px; line-height: 1; cursor: pointer; z-index: 10002; display: inline-flex; align-items: center; justify-content: center; }');
   buf.push('    .gallery-close:hover { background: rgba(255,255,255,0.3); }');
   buf.push('    .gallery-container { flex: 1; overflow-y: auto; padding: 72px 24px 28px; -webkit-overflow-scrolling: touch; }');
-  buf.push('    .gallery-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; max-width: 1400px; margin: 0 auto; }');
-  buf.push('    .gallery-item { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 10px; cursor: pointer; transition: transform 0.2s; background: #222; }');
+  // gallery-grid — НЕ grid (чтобы section-header был отдельно над сеткой).
+  // Отдельно каждая секция (.gallery-section-items) уже сама будет grid.
+  buf.push('    .gallery-grid { display: block; max-width: 100%; margin: 0 auto; }');
+  buf.push('    .gallery-item { position: relative; width: 350px; height: 350px; flex: 0 0 350px; overflow: hidden; border-radius: 0; cursor: pointer; transition: transform 0.2s; background: #222; }');
   buf.push('    .gallery-item:hover { transform: scale(1.02); }');
   buf.push('    .gallery-item img { display: block; width: 100%; height: 100%; object-fit: cover; }');
   buf.push('    .gallery-video-badge { position: absolute; top: 6px; left: 6px; background: rgba(0,0,0,0.6); color: white; font-size: 11px; padding: 3px 8px; border-radius: 999px; line-height: 1; }');
-  buf.push('    @media (max-width: 1200px) { .gallery-grid { grid-template-columns: repeat(3, 1fr); } }');
-  buf.push('    @media (max-width: 900px)  { .gallery-grid { grid-template-columns: repeat(2, 1fr); } }');
-  // На телефоне (<=600px) — ДВА ряда (repeat(2, 1fr)) и уменьшенные отступы/gap.
+  // Section: блок с header + отдельным grid с картинками/видео.
+  // На десктопе: одна картинка = 350×350 (square), gap = 1px между фото.
+  buf.push('    .gallery-section { display: block; margin: 0 0 36px 0; }');
+  buf.push('    .gallery-section-header { display: block; width: 100%; color: white; padding: 12px 14px; margin: 0 0 14px 0; font-size: 16px; font-weight: 600; background: rgba(255,255,255,0.04); border-radius: 6px; }');
+  buf.push('    .gallery-section-header .question { font-size: 13px; opacity: 0.9; margin-bottom: 4px; }');
+  buf.push('    .gallery-section-header .answer { font-size: 16px; font-weight: 700; }');
+  buf.push('    .gallery-section-items { display: grid; grid-template-columns: repeat(auto-fill, 350px); gap: 1px; justify-content: start; align-content: start; }');
+  // Телефон (<=600px): 3 колонки, gap = 1px между картинками, section-header над сеткой.
   buf.push('    @media (max-width: 600px) {');
-  buf.push('      .gallery-container { padding: 56px 12px 24px; }');
+  buf.push('      .gallery-container { padding: 56px 6px 24px; }');
   buf.push('      .gallery-close { top: 10px; right: 10px; width: 36px; height: 36px; font-size: 22px; }');
-  buf.push('      .gallery-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }');
-  buf.push('      .gallery-item { border-radius: 8px; }');
-  buf.push('      .gallery-video-badge { font-size: 10px; padding: 2px 6px; }');
+  buf.push('      .gallery-section { margin-bottom: 22px; }');
+  buf.push('      .gallery-section-header { padding: 10px 12px; font-size: 14px; margin-bottom: 10px; border-radius: 6px; }');
+  buf.push('      .gallery-section-header .question { font-size: 12px; }');
+  buf.push('      .gallery-section-header .answer { font-size: 15px; }');
+  buf.push('      .gallery-section-items { grid-template-columns: repeat(3, 1fr); gap: 1px; }');
+  buf.push('      .gallery-item { width: auto; height: auto; aspect-ratio: 1 / 1; border-radius: 0; flex-basis: auto; }');
+  buf.push('      .gallery-video-badge { font-size: 10px; padding: 2px 6px; top: 4px; left: 4px; }');
   buf.push('    }');
-  buf.push('    .gallery-section { margin-bottom: 30px; display: grid; grid-template-columns: inherit; }');
-  buf.push('    .gallery-section-header { grid-column: 1 / -1; color: white; padding: 15px 20px; border-radius: 8px; margin-bottom: 15px; font-size: 16px; font-weight: 600; }');
-  buf.push('    .gallery-section-header .question { font-size: 14px; opacity: 0.9; margin-bottom: 5px; }');
-  buf.push('    .gallery-section-header .answer { font-size: 18px; font-weight: 700; }');
-  buf.push('    @media (max-width: 600px) { .gallery-section { margin-bottom: 20px; } .gallery-section-header { padding: 12px 14px; font-size: 14px; margin-bottom: 10px; } .gallery-section-header .answer { font-size: 16px; } }');
   // Header
   buf.push('    .header-row { background: #ffffff !important; color: #6c757d; text-align: left; }');
   buf.push('    .title { font-weight: bold; font-size: 22px; }');
@@ -814,6 +820,10 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        answerDiv.textContent = group.answer || window.__("lb_noAnswer");');
   buf.push('        header.appendChild(answerDiv);');
   buf.push('        section.appendChild(header);');
+  // Внутренняя grid-обёртка для item'ов (gallery-section-items):
+  // section-header остаётся отдельно над сеткой (как подпись к секции).
+  buf.push('        const itemsWrap = document.createElement("div");');
+  buf.push('        itemsWrap.className = "gallery-section-items";');
   buf.push('        group.items.forEach((m) => {');
   buf.push('          const galleryItem = document.createElement("div");');
   buf.push('          galleryItem.className = "gallery-item";');
@@ -839,9 +849,10 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('            galleryItem.appendChild(img);');
   buf.push('          }');
   buf.push('          galleryItem.onclick = function() { closeGallery(); openLightbox(m.src, m.type); };');
-  buf.push('          section.appendChild(galleryItem);');
+  buf.push('          itemsWrap.appendChild(galleryItem);');
   buf.push('          if (currentIndex >= 0 && currentIndex < media.length && media[currentIndex].src === m.src) { targetElement = galleryItem; }');
   buf.push('        });');
+  buf.push('        section.appendChild(itemsWrap);');
   buf.push('        galleryGrid.appendChild(section);');
   buf.push('      });');
   buf.push('      document.getElementById("gallery-overlay").classList.add("active");');
