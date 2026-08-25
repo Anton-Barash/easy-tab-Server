@@ -285,8 +285,10 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Lightbox
   buf.push('    .lightbox { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; }');
   buf.push('    .lightbox.active { display: flex; }');
-  // Top bar: лево — глаз (скрыть UI), центр — зум-контролы, право — сетка/закрыть.
-  buf.push('    .lightbox-topbar { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 14px; z-index: 10002; background: linear-gradient(180deg, rgba(0,0,0,0.45), rgba(0,0,0,0)); }');
+  // Top bar: outer — full-width с градиентом-фоном, inner — контент центрирован
+  // max-width 680px (оптимальная читаемость), авто-высота по содержимому.
+  buf.push('    .lightbox-topbar { position: absolute; top: 0; left: 0; right: 0; z-index: 10002; background: linear-gradient(180deg, rgba(0,0,0,0.55), rgba(0,0,0,0)); padding: 10px 14px 24px 14px; box-sizing: border-box; }');
+  buf.push('    .lightbox-topbar-inner { width: 100%; max-width: 680px; margin: 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }');
   buf.push('    .lightbox-topbar .spacer { flex: 1 1 auto; min-width: 8px; }');
   buf.push('    .lightbox-ui-btn { background: rgba(255,255,255,0.2); backdrop-filter: blur(2px); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 16px; line-height: 1; transition: background 0.2s; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; height: 38px; min-width: 38px; }');
   buf.push('    .lightbox-ui-btn:hover { background: rgba(255,255,255,0.3); }');
@@ -297,10 +299,13 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .lightbox-nav.prev { left: 16px; }');
   buf.push('    .lightbox-nav.next { right: 16px; }');
   // Кнопки-подсказки (zoom и сетка) исчезают в режиме «без UI» и в gallery-overlay нет.
-  buf.push('    .lightbox-info { position: absolute; top: 60px; left: 14px; right: 14px; background: rgba(0,0,0,0.7); color: white; padding: 12px 14px; border-radius: 8px; overflow-y: auto; text-align: left; z-index: 10001; max-height: 34vh; }');
+  // Info-блок: фиксированная оптимальная ширина 680px для чтения, центрирован,
+  // высота по контенту (height:auto; min/max-height вместо left+right:14px full-width).
+  // Черная полоса больше не занимает весь экран — соответствует ширине контента.
+  buf.push('    .lightbox-info { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); width: 100%; max-width: 680px; box-sizing: border-box; background: rgba(0,0,0,0.78); color: white; padding: 14px 18px; border-radius: 10px; overflow-y: auto; text-align: left; z-index: 10001; height: auto; min-height: 0; max-height: 36vh; line-height: 1.55; backdrop-filter: blur(3px); box-shadow: 0 6px 24px rgba(0,0,0,0.4); }');
   buf.push('    .attention-answer { color: #f69a15; }');
-  buf.push('    .lightbox-question { font-weight: bold; font-size: 15px; margin-bottom: 5px; line-height: 1.3; }');
-  buf.push('    .lightbox-answer { font-size: 14px; line-height: 1.4; }');
+  buf.push('    .lightbox-question { font-weight: 700; font-size: 15px; margin: 0 0 8px 0; line-height: 1.45; letter-spacing: 0.1px; }');
+  buf.push('    .lightbox-answer { font-size: 14.5px; line-height: 1.6; margin: 0; }');
   buf.push('    .lightbox-image-container { position: relative; width: 100%; height: 100%; overflow: hidden; cursor: grab; display: flex; align-items: center; justify-content: center; z-index: 10000; touch-action: none; }');
   buf.push('    .lightbox-image-container.dragging { cursor: grabbing; }');
   buf.push('    .lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center center; }');
@@ -308,11 +313,12 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // Режим «просмотра без UI»: скрыть все, кроме стрелок и самой кнопки-глаз.
   buf.push('    .lightbox.ui-hidden .lightbox-topbar .hide-with-ui, .lightbox.ui-hidden .spacer, .lightbox.ui-hidden .lightbox-controls { display: none !important; }');
   buf.push('    .lightbox.ui-hidden .lightbox-info, .lightbox.ui-hidden .lightbox-thumbnails-bar { display: none !important; }');
-  buf.push('    .lightbox.ui-hidden .lightbox-topbar { background: transparent; justify-content: flex-start; }');
+  buf.push('    .lightbox.ui-hidden .lightbox-topbar { background: transparent; padding-bottom: 10px; }');
+  buf.push('    .lightbox.ui-hidden .lightbox-topbar-inner { justify-content: flex-start; }');
   // Mobile touch-friendly: thumbnails уже адаптивны, делаем info компактнее.
   buf.push('    @media (max-width: 640px) {');
   buf.push('      .lightbox-ui-btn { height: 36px; min-width: 36px; font-size: 15px; padding: 6px 10px; }');
-  buf.push('      .lightbox-info { top: 54px; left: 10px; right: 10px; padding: 10px 12px; max-height: 28vh; }');
+  buf.push('      .lightbox-info { top: 54px; left: 10px; right: 10px; transform: none; max-width: none; padding: 12px 14px; max-height: 32vh; line-height: 1.5; border-radius: 8px; }');
   buf.push('      .lightbox-question { font-size: 14px; }');
   buf.push('      .lightbox-answer { font-size: 13px; }');
   buf.push('      .lightbox-nav { padding: 10px 12px; min-width: 40px; min-height: 40px; font-size: 16px; left: 8px; }');
@@ -506,21 +512,23 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   // === Lightbox HTML ===
   buf.push('  <div class="lightbox" id="lightbox">');
   buf.push('    <div class="lightbox-topbar">');
+  buf.push('      <div class="lightbox-topbar-inner">');
   // Слева — кнопка-глаз: переключает режим скрытия UI.
-  buf.push('      <button class="lightbox-ui-btn" id="lightbox-ui-toggle" onclick="toggleUiVisibility()" data-i18n-title="lb_toggleUi" title="Скрыть/показать элементы управления">');
-  buf.push('        <span id="lightbox-eye-icon" style="display:inline-flex;align-items:center;justify-content:center;"></span>');
-  buf.push('      </button>');
-  buf.push('      <div class="spacer hide-with-ui"></div>');
+  buf.push('        <button class="lightbox-ui-btn" id="lightbox-ui-toggle" onclick="toggleUiVisibility()" data-i18n-title="lb_toggleUi" title="Скрыть/показать элементы управления">');
+  buf.push('          <span id="lightbox-eye-icon" style="display:inline-flex;align-items:center;justify-content:center;"></span>');
+  buf.push('        </button>');
+  buf.push('        <div class="spacer hide-with-ui"></div>');
   // Центр — зум-контролы.
-  buf.push('      <div class="lightbox-controls hide-with-ui">');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomIn()" data-i18n-title="lb_zoomIn" title="Увеличить">+</button>');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="zoomOut()" data-i18n-title="lb_zoomOut" title="Уменьшить">−</button>');
-  buf.push('        <button class="lightbox-ui-btn small" onclick="resetZoom()" data-i18n-title="lb_resetZoom" title="Сбросить масштаб">100%</button>');
-  buf.push('      </div>');
-  buf.push('      <div class="spacer hide-with-ui"></div>');
+  buf.push('        <div class="lightbox-controls hide-with-ui">');
+  buf.push('          <button class="lightbox-ui-btn small" onclick="zoomIn()" data-i18n-title="lb_zoomIn" title="Увеличить">+</button>');
+  buf.push('          <button class="lightbox-ui-btn small" onclick="zoomOut()" data-i18n-title="lb_zoomOut" title="Уменьшить">−</button>');
+  buf.push('          <button class="lightbox-ui-btn small" onclick="resetZoom()" data-i18n-title="lb_resetZoom" title="Сбросить масштаб">100%</button>');
+  buf.push('        </div>');
+  buf.push('        <div class="spacer hide-with-ui"></div>');
   // Справа — сетка и закрыть.
-  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="openGallery()" data-i18n-title="lb_gallery" title="Просмотр сеткой">⊞</button>');
-  buf.push('      <button class="lightbox-ui-btn hide-with-ui" onclick="closeLightbox()" data-i18n-title="lb_close" title="Закрыть">×</button>');
+  buf.push('        <button class="lightbox-ui-btn hide-with-ui" onclick="openGallery()" data-i18n-title="lb_gallery" title="Просмотр сеткой">⊞</button>');
+  buf.push('        <button class="lightbox-ui-btn hide-with-ui" onclick="closeLightbox()" data-i18n-title="lb_close" title="Закрыть">×</button>');
+  buf.push('      </div>');
   buf.push('    </div>');
   buf.push('    <div class="lightbox-info">');
   buf.push('      <div class="lightbox-question" id="lightbox-question"></div>');
