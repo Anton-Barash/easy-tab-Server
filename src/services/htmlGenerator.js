@@ -686,6 +686,8 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      document.body.style.overflow = "hidden";');
   buf.push('      resetZoom();');
   buf.push('      updateActiveThumbnail();');
+  buf.push('      // Заполняем SVG-иконку кнопки-глаза (иначе span пустой и кнопка невидима).');
+  buf.push('      setUiHidden(false);');
   buf.push('    }');
 
   buf.push('    function closeLightbox() {');
