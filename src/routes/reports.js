@@ -8,6 +8,7 @@
 //
 // Эндпоинты:
 //   POST   /reports                — сохранить отчёт (создать/обновить)
+//   PATCH  /reports/:id            — частично обновить отчёт (merge по дельте)
 //   GET    /reports                — список отчётов пользователя
 //   GET    /reports/:id            — получить JSON отчёта
 //   DELETE /reports/:id            — удалить отчёт
@@ -27,6 +28,10 @@ async function reportsRoutes(fastify) {
   // Сохранить отчёт (создать новый или обновить)
   // Body: { title, reportData, reportId? }
   fastify.post('/', { preHandler: requireAuth }, reportsController.saveReport);
+
+  // Частично обновить отчёт (merge по дельте)
+  // Body: { baseVersion, baseSnapshot, reportData }
+  fastify.patch('/:id', { preHandler: requireAuth }, reportsController.patchReport);
 
   // Список отчётов пользователя
   fastify.get('/', { preHandler: requireAuth }, reportsController.listReports);

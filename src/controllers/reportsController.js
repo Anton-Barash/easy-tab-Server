@@ -19,15 +19,16 @@ const zipService = require('../services/zipService');
  * POST /reports
  * Сохранить отчёт (создать новый или обновить существующий).
  *
- * Body: { title: string, reportData: object, reportId?: number }
+ * Body: { title: string, reportData: object, reportId?: number, baseVersion?: number }
  *
  * Если reportId передан — обновляем существующий отчёт.
  * Если не передан — создаём новый.
+ * baseVersion включает optimistic locking: при несовпадении возвращается 409.
  *
  * Возвращает: { success, report: { id, title, ... } }
  */
 async function saveReport(request, reply) {
-  const { title, reportData, reportId } = request.body;
+  const { title, reportData, reportId, baseVersion } = request.body;
 
   // Валидация
   if (!title) {
@@ -48,21 +49,87 @@ async function saveReport(request, reply) {
     }
   }
 
+  let parsedBaseVersion = null;
+  if (baseVersion !== undefined && baseVersion !== null && baseVersion !== '') {
+    parsedBaseVersion = Number(baseVersion);
+    if (!Number.isInteger(parsedBaseVersion) || parsedBaseVersion < 1) {
+      return reply.status(400).send({ success: false, error: 'Invalid baseVersion' });
+    }
+  }
+
   try {
     const report = await reportsService.saveReport({
       userId: request.user.userId,
       title,
       reportData,
       reportId: parsedReportId,
+      baseVersion: parsedBaseVersion,
     });
 
     return reply.send({ success: true, report });
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({
+    const payload = {
       success: false,
       error: status >= 500 ? 'Failed to save report' : error.message,
+    };
+    if (error.code === 'VERSION_CONFLICT') {
+      payload.code = error.code;
+      payload.currentVersion = error.currentVersion;
+    }
+    return reply.status(status).send(payload);
+  }
+}
+
+/**
+ * PATCH /reports/:id
+ * Частично обновить отчёт с merge по дельте.
+ *
+ * Body: { baseVersion: number, baseSnapshot: object, reportData: object }
+ */
+async function patchReport(request, reply) {
+  const { id } = request.params;
+  const reportId = parseInt(id, 10);
+  const { baseVersion, baseSnapshot, reportData } = request.body || {};
+
+  if (isNaN(reportId) || reportId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+  if (baseSnapshot == null || typeof baseSnapshot !== 'object') {
+    return reply.status(400).send({ success: false, error: 'baseSnapshot is required' });
+  }
+  if (reportData == null || typeof reportData !== 'object') {
+    return reply.status(400).send({ success: false, error: 'reportData is required' });
+  }
+
+  const parsedBaseVersion = Number(baseVersion);
+  if (!Number.isInteger(parsedBaseVersion) || parsedBaseVersion < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid baseVersion' });
+  }
+
+  try {
+    const report = await reportsService.patchReport({
+      userId: request.user.userId,
+      reportId,
+      baseVersion: parsedBaseVersion,
+      baseSnapshot,
+      newReportData: reportData,
     });
+    return reply.send({ success: true, report });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    const payload = {
+      success: false,
+      error: status >= 500 ? 'Failed to patch report' : error.message,
+    };
+    if (error.code === 'VERSION_CONFLICT') {
+      payload.code = error.code;
+      payload.currentVersion = error.currentVersion;
+      if (error.conflicts && error.conflicts.length > 0) {
+        payload.conflicts = error.conflicts;
+      }
+    }
+    return reply.status(status).send(payload);
   }
 }
 
@@ -212,6 +279,7 @@ async function downloadReportZip(request, reply) {
 
 module.exports = {
   saveReport,
+  patchReport,
   listReports,
   getReport,
   deleteReport,

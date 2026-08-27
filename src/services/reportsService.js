@@ -16,6 +16,7 @@ const thumbnailService = require('./thumbnailService');
 const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey, getReportMimeType } = require('../utils/fileUtils');
 const logger = require('../utils/logger');
 const { generateReportHtml } = require('./htmlGenerator');
+const { computeDelta, applyDelta, deltasIntersect, buildAnswerConflicts } = require('./reportDeltaService');
 
 /**
  * MIME-типы для файлов отчёта определяются централизованно в fileUtils.js
@@ -37,9 +38,10 @@ const { generateReportHtml } = require('./htmlGenerator');
  * @param {string} params.title - название отчёта
  * @param {object} params.reportData - JSON-объект отчёта
  * @param {string|null} [params.reportId] - ID существующего отчёта (для обновления)
- * @returns {Promise<object>} { id, title, ks3Folder, createdAt }
+ * @param {number|null} [params.baseVersion] - версия, на основе которой выполняется обновление
+ * @returns {Promise<object>} { id, title, ks3Folder, createdAt, version }
  */
-async function saveReport({ userId, title, reportData, reportId }) {
+async function saveReport({ userId, title, reportData, reportId, baseVersion }) {
   // Сериализуем отчёт в JSON
   const jsonBuffer = Buffer.from(JSON.stringify(reportData), 'utf-8');
 
@@ -47,7 +49,7 @@ async function saveReport({ userId, title, reportData, reportId }) {
   if (reportId) {
     // Проверяем, что отчёт существует и принадлежит пользователю
     const existing = await db.query(
-      'SELECT * FROM reports WHERE id = $1 AND creator_user_id = $2',
+      'SELECT id, public_id, ks3_folder, file_path, version FROM reports WHERE id = $1 AND creator_user_id = $2',
       [reportId, userId]
     );
 
@@ -63,15 +65,28 @@ async function saveReport({ userId, title, reportData, reportId }) {
     const fileKey = ks3Folder
       ? `${ks3Folder}report.json`
       : row.file_path;
+    const currentVersion = row.version || 1;
 
     // Перезаписываем JSON в KS3 (бекап)
     await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
+    // Optimistic locking: если клиент передал baseVersion, проверяем её.
+    // Старые клиенты (без baseVersion) работают по старому без проверки.
+    if (baseVersion !== undefined && baseVersion !== null && baseVersion !== currentVersion) {
+      const err = new Error('Report was modified by another session');
+      err.statusCode = 409;
+      err.code = 'VERSION_CONFLICT';
+      err.currentVersion = currentVersion;
+      throw err;
+    }
+
     // Обновляем заголовок и JSON-данные в БД
-    await db.query(
-      'UPDATE reports SET title = $1, report_data = $2::jsonb WHERE id = $3',
+    const updateResult = await db.query(
+      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1 WHERE id = $3 RETURNING version',
       [title, reportData, reportId]
     );
+
+    const newVersion = updateResult.rows[0]?.version ?? currentVersion;
 
     logger.info(`saveReport: updated report ${reportId} for user ${userId}`);
     return {
@@ -80,6 +95,7 @@ async function saveReport({ userId, title, reportData, reportId }) {
       title,
       fileKey,
       ks3Folder,
+      version: newVersion,
     };
   }
 
@@ -95,18 +111,18 @@ async function saveReport({ userId, title, reportData, reportId }) {
   // Загружаем JSON в KS3 (бекап)
   await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
-  // Создаём запись в БД (с ks3_folder, report_data и public_id).
-  // C-34: если INSERT упадёт — удаляем осиротевший файл из KS3 (компенсация).
-  let row;
-  try {
-    const result = await db.query(
-      `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level, report_data, public_id)
-       VALUES ($1, $2, $3, $4, 'specific', $5::jsonb, $6)
-       RETURNING id, title, created_at, public_id`,
-      [title, fileKey, ks3Folder, userId, reportData, publicId]
-    );
-    row = result.rows[0];
-  } catch (insertErr) {
+  // Создаём запись в БД (с ks3_folder, report_data, public_id и version).
+    // C-34: если INSERT упадёт — удаляем осиротевший файл из KS3 (компенсация).
+    let row;
+    try {
+      const result = await db.query(
+        `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level, report_data, public_id, version)
+         VALUES ($1, $2, $3, $4, 'specific', $5::jsonb, $6, 1)
+         RETURNING id, title, created_at, public_id, version`,
+        [title, fileKey, ks3Folder, userId, reportData, publicId]
+      );
+      row = result.rows[0];
+    } catch (insertErr) {
     logger.error(`saveReport: DB insert failed, compensating KS3 delete for ${fileKey}: ${insertErr.message}`);
     try {
       await ks3.deleteFile(fileKey);
@@ -119,13 +135,113 @@ async function saveReport({ userId, title, reportData, reportId }) {
   logger.info(`saveReport: created report ${row.id} (${row.public_id}) for user ${userId}, folder=${ks3Folder}`);
 
   return {
-    id: row.id,
-    publicId: row.public_id,
-    title: row.title,
-    fileKey,
-    ks3Folder,
-    createdAt: row.created_at,
-  };
+      id: row.id,
+      publicId: row.public_id,
+      title: row.title,
+      fileKey,
+      ks3Folder,
+      createdAt: row.created_at,
+      version: row.version || 1,
+    };
+  }
+
+/**
+ * Частично обновить отчёт (PATCH): применяет только изменённые поля,
+ * вычисленные как дельта между baseSnapshot и newReportData.
+ *
+ * Версия отчёта НЕ сравнивается жёстко с baseVersion. Вместо этого
+ * используется атомарный UPDATE ... WHERE version = $currentVersion.
+ * Если за время расчёта дельты отчёт изменился — делаем retry.
+ * 409 возвращается только когда дельты клиента и сервера пересекаются.
+ *
+ * @param {object} params
+ * @param {number} params.userId
+ * @param {string} params.reportId
+ * @param {number} params.baseVersion
+ * @param {object} params.baseSnapshot
+ * @param {object} params.newReportData
+ * @returns {Promise<object>} { id, publicId, title, ks3Folder, version }
+ */
+async function patchReport({ userId, reportId, baseVersion, baseSnapshot, newReportData }) {
+  const clientDelta = computeDelta(baseSnapshot, newReportData);
+
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    // Загружаем актуальное состояние отчёта.
+    const existing = await db.query(
+      'SELECT id, public_id, ks3_folder, file_path, version, report_data, title FROM reports WHERE id = $1 AND creator_user_id = $2',
+      [reportId, userId]
+    );
+
+    if (existing.rows.length === 0) {
+      const err = new Error('Report not found or access denied');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const row = existing.rows[0];
+    const currentVersion = row.version || 1;
+    const currentData = row.report_data || {};
+    const ks3Folder = row.ks3_folder || null;
+    const fileKey = ks3Folder ? `${ks3Folder}report.json` : row.file_path;
+
+    // Вычисляем дельту "сервера" (что изменилось с baseSnapshot).
+    const serverDelta = computeDelta(baseSnapshot, currentData);
+
+    // Конфликты на уровне отдельных подответов.
+    const answerConflicts = buildAnswerConflicts(
+      clientDelta,
+      serverDelta,
+      currentData,
+      newReportData,
+    );
+
+    // Если дельты пересекаются — конфликт, клиент должен решить сам.
+    if (answerConflicts.length > 0 || deltasIntersect(clientDelta, serverDelta)) {
+      const err = new Error('Report changes conflict with another session');
+      err.statusCode = 409;
+      err.code = 'VERSION_CONFLICT';
+      err.currentVersion = currentVersion;
+      err.conflicts = answerConflicts;
+      throw err;
+    }
+
+    // Применяем дельту клиента к текущему состоянию сервера.
+    const mergedData = applyDelta(currentData, clientDelta);
+
+    // Атомарно обновляем только если версия не изменилась с момента чтения.
+    const updateResult = await db.query(
+      'UPDATE reports SET report_data = $1::jsonb, version = version + 1 WHERE id = $2 AND version = $3 RETURNING version',
+      [mergedData, reportId, currentVersion]
+    );
+
+    if (updateResult.rows.length > 0) {
+      const newVersion = updateResult.rows[0].version;
+
+      // Сериализуем и обновляем KS3-бэкап.
+      const jsonBuffer = Buffer.from(JSON.stringify(mergedData), 'utf-8');
+      await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
+
+      logger.info(`patchReport: merged report ${reportId} for user ${userId}, delta ops=${clientDelta.length}`);
+      return {
+        id: parseInt(reportId, 10),
+        publicId: row.public_id,
+        title: row.title,
+        fileKey,
+        ks3Folder,
+        version: newVersion,
+      };
+    }
+
+    // Версия изменилась между чтением и записью — retry.
+    logger.warn(`patchReport: version changed during merge for report ${reportId}, attempt ${attempt + 1}`);
+  }
+
+  // Не удалось применить после всех попыток.
+  const err = new Error('Report was modified by another session');
+  err.statusCode = 409;
+  err.code = 'VERSION_CONFLICT';
+  throw err;
 }
 
 /**
@@ -138,7 +254,7 @@ async function saveReport({ userId, title, reportData, reportId }) {
  */
 async function listReports(userId) {
   const result = await db.query(
-    `SELECT id, title, created_at, public_id
+    `SELECT id, title, created_at, public_id, version
      FROM reports
      WHERE creator_user_id = $1
      ORDER BY created_at DESC`,
@@ -150,6 +266,7 @@ async function listReports(userId) {
     publicId: row.public_id,
     title: row.title,
     createdAt: row.created_at,
+    version: row.version || 1,
   }));
 }
 
@@ -167,7 +284,7 @@ async function listReports(userId) {
 async function getReport(reportId, userId) {
   // Проверяем доступ
   const meta = await db.query(
-    'SELECT id, title, file_path, ks3_folder, report_data, public_id FROM reports WHERE id = $1 AND creator_user_id = $2',
+    'SELECT id, title, file_path, ks3_folder, report_data, public_id, version FROM reports WHERE id = $1 AND creator_user_id = $2',
     [reportId, userId]
   );
 
@@ -196,6 +313,7 @@ async function getReport(reportId, userId) {
     title: row.title,
     ks3Folder,
     reportData,
+    version: row.version || 1,
   };
 }
 
@@ -278,7 +396,7 @@ async function deleteReport(reportId, userId) {
 async function getReportForView(reportId, userId, options = {}) {
   const { skipAccessCheck = false } = options;
   const result = await db.query(
-    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE id = $1',
+    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id, version FROM reports WHERE id = $1',
     [reportId]
   );
 
@@ -297,7 +415,7 @@ async function getReportForView(reportId, userId, options = {}) {
 async function getReportForViewByPublicId(publicId, userId, options = {}) {
   const { skipAccessCheck = false } = options;
   const result = await db.query(
-    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id FROM reports WHERE public_id = $1',
+    'SELECT id, title, ks3_folder, is_public, creator_user_id, report_data, public_id, version FROM reports WHERE public_id = $1',
     [publicId]
   );
 
@@ -326,6 +444,7 @@ function _mapReportForView(report, userId, skipAccessCheck = false) {
     isPublic: report.is_public,
     creatorUserId: report.creator_user_id,
     reportData: report.report_data,
+    version: report.version || 1,
   };
 }
 
@@ -494,6 +613,7 @@ async function saveReportFile(storageKey, data, contentType) {
 
 module.exports = {
   saveReport,
+  patchReport,
   listReports,
   getReport,
   deleteReport,

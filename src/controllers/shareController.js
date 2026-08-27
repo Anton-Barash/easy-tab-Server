@@ -142,7 +142,7 @@ async function getShareInfo(request, reply) {
  */
 async function saveSharedReport(request, reply) {
   const { token } = request.params;
-  const { reportData, anonymousId } = request.body || {};
+  const { reportData, anonymousId, baseVersion } = request.body || {};
 
   if (!reportData) {
     return reply.status(400).send({ success: false, error: 'Report data is required' });
@@ -155,11 +155,20 @@ async function saveSharedReport(request, reply) {
       return reply.status(403).send({ success: false, error: 'This share link is view-only' });
     }
 
+    let parsedBaseVersion = null;
+    if (baseVersion !== undefined && baseVersion !== null && baseVersion !== '') {
+      parsedBaseVersion = Number(baseVersion);
+      if (!Number.isInteger(parsedBaseVersion) || parsedBaseVersion < 1) {
+        return reply.status(400).send({ success: false, error: 'Invalid baseVersion' });
+      }
+    }
+
     const updated = await reportsService.saveReport({
       userId: report.creatorUserId,
       title: report.title,
       reportData,
       reportId: report.id,
+      baseVersion: parsedBaseVersion,
     });
 
     await shareService.logShareAccess({
@@ -172,10 +181,15 @@ async function saveSharedReport(request, reply) {
     return reply.send({ success: true, report: updated });
   } catch (error) {
     const status = error.statusCode || 500;
-    return reply.status(status).send({
+    const payload = {
       success: false,
       error: status >= 500 ? 'Failed to save report' : error.message,
-    });
+    };
+    if (error.code === 'VERSION_CONFLICT') {
+      payload.code = error.code;
+      payload.currentVersion = error.currentVersion;
+    }
+    return reply.status(status).send(payload);
   }
 }
 
