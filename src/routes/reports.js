@@ -68,6 +68,9 @@ async function reportsRoutes(fastify) {
   // Сохранить отчёт, открытый по share-ссылке
   fastify.post('/shares/:token/save', { preHandler: optionalAuth }, shareController.saveSharedReport);
 
+  // Merge-by-ID ops по share-ссылке (анонимный редактор)
+  fastify.patch('/shares/:token', { preHandler: optionalAuth }, shareController.patchSharedReportOps);
+
   // HTML для просмотра по share-ссылке
   fastify.get('/shares/:token/html', { preHandler: optionalAuth }, shareController.getSharedReportHtml);
 

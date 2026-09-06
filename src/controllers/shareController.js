@@ -194,6 +194,73 @@ async function saveSharedReport(request, reply) {
 }
 
 /**
+ * PATCH /reports/shares/:token
+ * Merge-by-ID ops от анонимного редактора по share-ссылке (Фаза 2b/4).
+ *
+ * Body: { ops: [...] } (+ anonymousId).
+ * Доступно только для share с permissions='edit'.
+ * Автор правок фиксируется как share:<token>:<anonymousId>.
+ */
+async function patchSharedReportOps(request, reply) {
+  const { token } = request.params;
+  const body = request.body || {};
+  const { ops, anonymousId } = body;
+
+  if (!Array.isArray(ops) || ops.length === 0) {
+    return reply.status(400).send({ success: false, error: 'ops is required' });
+  }
+  if (ops.length > 200) {
+    return reply.status(400).send({ success: false, error: 'Too many ops' });
+  }
+
+  try {
+    const { share, report } = await shareService.getReportByShareToken(token);
+
+    if (!shareService.canEdit(share)) {
+      return reply.status(403).send({ success: false, error: 'This share link is view-only' });
+    }
+
+    const authorId = anonymousId
+      ? `share:${token}:${anonymousId}`
+      : `share:${token}`;
+
+    const updated = await reportsService.patchReportOps({
+      userId: report.creatorUserId,
+      reportId: report.id,
+      ops,
+      authorId,
+    });
+
+    await shareService.logShareAccess({
+      shareId: share.id,
+      request,
+      anonymousId,
+      action: 'save',
+    });
+
+    return reply.send({
+      success: true,
+      newVersion: updated.version,
+      merged: updated.merged,
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    const payload = {
+      success: false,
+      error: status >= 500 ? 'Failed to patch report' : error.message,
+    };
+    if (error.code === 'VERSION_CONFLICT') {
+      payload.code = error.code;
+      payload.currentVersion = error.currentVersion;
+      if (error.conflicts && error.conflicts.length > 0) {
+        payload.conflicts = error.conflicts;
+      }
+    }
+    return reply.status(status).send(payload);
+  }
+}
+
+/**
  * GET /reports/shares/:token/html
  * HTML-версия отчёта для просмотра.
  */
@@ -327,6 +394,7 @@ module.exports = {
   revokeShare,
   getShareInfo,
   saveSharedReport,
+  patchSharedReportOps,
   getSharedReportHtml,
   getSharedWelcomeHtml,
   downloadSharedReportZip,

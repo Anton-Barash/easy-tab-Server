@@ -17,6 +17,7 @@ const { generateUuid, generatePublicId, sanitizeFilename, buildStorageKey, getRe
 const logger = require('../utils/logger');
 const { generateReportHtml } = require('./htmlGenerator');
 const { computeDelta, applyDelta, deltasIntersect, buildAnswerConflicts } = require('./reportDeltaService');
+const { mergeReportOps } = require('./reportOpsService');
 
 /**
  * MIME-типы для файлов отчёта определяются централизованно в fileUtils.js
@@ -238,6 +239,98 @@ async function patchReport({ userId, reportId, baseVersion, baseSnapshot, newRep
   }
 
   // Не удалось применить после всех попыток.
+  const err = new Error('Report was modified by another session');
+  err.statusCode = 409;
+  err.code = 'VERSION_CONFLICT';
+  throw err;
+}
+
+/**
+ * PATCH /reports/:id c merge-by-ID ops (Фаза 4).
+ *
+ * Применяет ops к документу через reportOpsService (см. SERVER_SYNC_SPEC §3-4).
+ * При per-cell конфликте (answer.update с устаревшим baseUpdatedAt) возвращает
+ * 409 VERSION_CONFLICT с conflicts[] — без изменения БД.
+ *
+ * @param {object} params
+ * @param {number} params.userId - владелец отчёта (для share — creator_user_id)
+ * @param {number} params.reportId
+ * @param {Array} params.ops
+ * @param {string} [params.authorId] - автор правок; по умолчанию `user:<userId>`.
+ *   Для анонимных share-правок передаётся `share:<token>:<anonId>`.
+ * @returns {Promise<{id, publicId, title, fileKey, ks3Folder, version, merged}>}
+ */
+async function patchReportOps({ userId, reportId, ops, authorId }) {
+  const resolvedAuthorId = authorId || `user:${userId}`;
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt += 1) {
+    const existing = await db.query(
+      'SELECT id, public_id, ks3_folder, file_path, version, report_data, title FROM reports WHERE id = $1 AND creator_user_id = $2',
+      [reportId, userId]
+    );
+
+    if (existing.rows.length === 0) {
+      const err = new Error('Report not found or access denied');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const row = existing.rows[0];
+    const currentVersion = row.version || 1;
+    const currentData = row.report_data || {};
+    const ks3Folder = row.ks3_folder || null;
+    const fileKey = ks3Folder ? `${ks3Folder}report.json` : row.file_path;
+
+    const result = mergeReportOps(currentData, ops, {
+      authorId: resolvedAuthorId,
+    });
+
+    // Конфликты одной ячейки — клиент должен разрешить и прислать ops заново.
+    if (result.conflicts.length > 0) {
+      const err = new Error('Report changes conflict with another session');
+      err.statusCode = 409;
+      err.code = 'VERSION_CONFLICT';
+      err.currentVersion = currentVersion;
+      err.conflicts = result.conflicts;
+      throw err;
+    }
+
+    const mergedData = result.doc;
+    const newTitle =
+      typeof mergedData.reportName === 'string' && mergedData.reportName.trim() !== ''
+        ? mergedData.reportName
+        : row.title;
+
+    const updateResult = await db.query(
+      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1 WHERE id = $3 AND version = $4 RETURNING version',
+      [newTitle, mergedData, reportId, currentVersion]
+    );
+
+    if (updateResult.rows.length > 0) {
+      const newVersion = updateResult.rows[0].version;
+
+      const jsonBuffer = Buffer.from(JSON.stringify(mergedData), 'utf-8');
+      await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
+
+      logger.info(
+        `patchReportOps: merged report ${reportId} for user ${userId}, ops=${Array.isArray(ops) ? ops.length : 0}`
+      );
+      return {
+        id: parseInt(reportId, 10),
+        publicId: row.public_id,
+        title: newTitle,
+        fileKey,
+        ks3Folder,
+        version: newVersion,
+        merged: mergedData,
+      };
+    }
+
+    logger.warn(
+      `patchReportOps: version changed during merge for report ${reportId}, attempt ${attempt + 1}`
+    );
+  }
+
   const err = new Error('Report was modified by another session');
   err.statusCode = 409;
   err.code = 'VERSION_CONFLICT';

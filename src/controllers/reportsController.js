@@ -83,18 +83,56 @@ async function saveReport(request, reply) {
 
 /**
  * PATCH /reports/:id
- * Частично обновить отчёт с merge по дельте.
+ * Обновить отчёт.
  *
- * Body: { baseVersion: number, baseSnapshot: object, reportData: object }
+ * Два формата тела:
+ *   legacy: { baseVersion, baseSnapshot, reportData } — merge по дельте
+ *   ops   : { ops: [...] }                              — merge-by-ID (Фаза 4)
  */
 async function patchReport(request, reply) {
   const { id } = request.params;
   const reportId = parseInt(id, 10);
-  const { baseVersion, baseSnapshot, reportData } = request.body || {};
+  const body = request.body || {};
 
   if (isNaN(reportId) || reportId < 1) {
     return reply.status(400).send({ success: false, error: 'Invalid report id' });
   }
+
+  // ----- Merge-by-ID (ops) -----
+  if (Array.isArray(body.ops)) {
+    if (body.ops.length > 200) {
+      return reply.status(400).send({ success: false, error: 'Too many ops' });
+    }
+    try {
+      const report = await reportsService.patchReportOps({
+        userId: request.user.userId,
+        reportId,
+        ops: body.ops,
+      });
+      return reply.send({
+        success: true,
+        newVersion: report.version,
+        merged: report.merged,
+      });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      const payload = {
+        success: false,
+        error: status >= 500 ? 'Failed to patch report' : error.message,
+      };
+      if (error.code === 'VERSION_CONFLICT') {
+        payload.code = error.code;
+        payload.currentVersion = error.currentVersion;
+        if (error.conflicts && error.conflicts.length > 0) {
+          payload.conflicts = error.conflicts;
+        }
+      }
+      return reply.status(status).send(payload);
+    }
+  }
+
+  // ----- Legacy (delta-merge) -----
+  const { baseVersion, baseSnapshot, reportData } = body;
   if (baseSnapshot == null || typeof baseSnapshot !== 'object') {
     return reply.status(400).send({ success: false, error: 'baseSnapshot is required' });
   }
