@@ -31,6 +31,37 @@ config.env = env;
 const parsedPort = parseInt(process.env.PORT, 10);
 config.port = !isNaN(parsedPort) ? parsedPort : config.port;
 
+// ------------------------------------------------------------
+// TLS/HTTPS (easytab.cloud — DigiCert).
+// Включается env-флагом TLS_ENABLED; пути к сертификату и ключу —
+// через TLS_CERT / TLS_KEY. Абсолютный путь используется как есть,
+// относительный — резолвится относительно корня проекта.
+// Пути не хардкодим: в .env / .env.production / ecosystem.config.js.
+// ------------------------------------------------------------
+config.tlsEnabled = process.env.TLS_ENABLED === '1' || process.env.TLS_ENABLED === 'true';
+// Порт для HTTP→HTTPS редиректа (только когда TLS включён).
+// По умолчанию 80 (production); в dev — 8000, чтобы не трогать системный 80.
+const parsedRedirectPort = parseInt(process.env.TLS_REDIRECT_PORT, 10);
+config.tlsRedirectPort = !isNaN(parsedRedirectPort) ? parsedRedirectPort : 80;
+// Публичный host, на который редиректим (Location: https://<host>[:port]/...).
+config.tlsRedirectHost = process.env.TLS_REDIRECT_HOST || 'easytab.cloud';
+if (config.tlsEnabled) {
+  const resolvePath = (p) => path.isAbsolute(p) ? p : path.join(rootDir, p);
+  const certPath = resolvePath(process.env.TLS_CERT || 'certs/easytab.cloud.pem');
+  const keyPath = resolvePath(process.env.TLS_KEY || 'certs/easytab.cloud.key');
+  try {
+    config.tls = {
+      cert: fs.readFileSync(certPath),
+      key: fs.readFileSync(keyPath),
+    };
+  } catch (err) {
+    console.error(`TLS не удалось инициализировать (TLS_ENABLED=true): ${err.message}`);
+    console.error(`  TLS_CERT=${certPath}`);
+    console.error(`  TLS_KEY=${keyPath}`);
+    process.exit(1);
+  }
+}
+
 // P1-18: централизованная валидация конфигурации при старте.
 // В production проверяем наличие всех обязательных переменных.
 function validateConfig(cfg) {

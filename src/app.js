@@ -54,6 +54,10 @@ function buildApp() {
     // M-31: ограничение размера JSON-тела (10MB) — защита от огромных payload.
     // Multipart-загрузки регулируются отдельно через @fastify/multipart limits.
     bodyLimit: 10 * 1024 * 1024,
+    // TLS/HTTPS: включается через env (TLS_ENABLED=true). Сертификат/ключ
+    // читаются в config/index.js. Если TLS отключён — поле отсутствует,
+    // Fastify слушает обычный HTTP (как раньше).
+    ...(config.tls ? { https: config.tls } : {}),
   });
 
   // Регистрация middleware

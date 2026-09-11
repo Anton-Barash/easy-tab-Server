@@ -2,6 +2,7 @@ const buildApp = require('./app');
 const config = require('./config');
 const { runMigrations } = require('./db/migrationRunner');
 const { closePool } = require('./services/databaseService');
+const { startHttpToHttpsRedirect } = require('./services/httpRedirectServer');
 const ks3 = require('./services/s3Storage');
 
 // P1-18: валидация конфигурации при старте (production: обязательные переменные).
@@ -22,6 +23,10 @@ process.on('unhandledRejection', (reason) => {
 async function start() {
   const app = buildApp();
 
+  // HTTP→HTTPS редирект: отдельный plain-HTTP сервер (обычно порт 80),
+  // запускается только когда включён TLS. При downgrade на файл не влияет.
+  let redirectServer = null;
+
   try {
     // Run database migrations on startup
     await runMigrations();
@@ -31,7 +36,23 @@ async function start() {
     await ks3.ensureBucketCors();
 
     await app.listen({ port: config.port, host: config.host });
-    app.log.info(`Server running on ${config.host}:${config.port} [${config.env}]`);
+    const scheme = config.tls ? 'https' : 'http';
+    app.log.info(`Server running on ${scheme}://${config.host}:${config.port} [${config.env}]`);
+
+    // Поднимаем HTTP→HTTPS редирект (только в TLS-режиме). Если порт 80 занят
+    // (напр. локально), лочим ошибку, но не роняем основной HTTPS-сервер.
+    if (config.tlsEnabled) {
+      try {
+        redirectServer = await startHttpToHttpsRedirect({
+          port: config.tlsRedirectPort,
+          httpsPort: config.port,
+          host: config.host,
+          httpsHost: config.tlsRedirectHost || 'easytab.cloud',
+        });
+      } catch (err) {
+        app.log.warn(`HTTP→HTTPS redirect on :${config.tlsRedirectPort} не запущен: ${err.message}`);
+      }
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);
@@ -50,6 +71,10 @@ async function start() {
       app.log.info('Fastify closed');
     } catch (err) {
       app.log.error(`Error closing Fastify: ${err.message}`);
+    }
+    if (redirectServer) {
+      redirectServer.close();
+      app.log.info('HTTP→HTTPS redirect server closed');
     }
     try {
       await closePool();

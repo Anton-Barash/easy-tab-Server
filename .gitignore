@@ -16,3 +16,10 @@ npm_*.log
 
 # Sample-директория (не отслеживать)
 sample/
+
+# TLS-сертификаты (easytab.cloud) — приватный ключ не должен попасть в git.
+certs/
+*.key
+*.pem
+*.pfx
+*.jks

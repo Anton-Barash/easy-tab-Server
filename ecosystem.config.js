@@ -19,10 +19,15 @@ module.exports = {
     max_memory_restart: '1G',
     env_production: {
       NODE_ENV: 'production',
-      // Стандартный HTTP-порт — адрес без «:8000» (http://easytab.cloud).
-      // Порт 80 требует прав root (или setcap cap_net_bind_service) и должен
+      // HTTPS-порт: сервер терминирует TLS сам (easytab.cloud, certs/).
+      // Порт 443 требует прав root (или setcap cap_net_bind_service) и должен
       // быть открыт в облачном firewall/балансировщике.
-      PORT: 80,
+      PORT: 443,
+      TLS_ENABLED: 1,
+      TLS_CERT: 'certs/easytab.cloud.pem',
+      TLS_KEY: 'certs/easytab.cloud.key',
+      // HTTP→HTTPS редирект: приложение отдельно слушает 80 и редиректит на 443.
+      TLS_REDIRECT_PORT: 80,
       // Секреты и внутренние адреса (DB_HOST=10.0.1.32 и т.д.) — в .env.production
       // на сервере. Он загружается автоматически при NODE_ENV=production.
       // Не коммитить реальные значения в этот файл!
