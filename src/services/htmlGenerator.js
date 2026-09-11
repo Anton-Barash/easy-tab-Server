@@ -371,14 +371,11 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('    .no-border { border-bottom: none !important; font-size: 18px; }');
   // === i18n UI-lang switcher + lightbox UI-strings styles (shared bootstrap) ===
   buf.push(_ui18nInject('css'));
-  buf.push('    .ui-lang-wrap { display: flex; justify-content: flex-end; margin: 6px 16px -2px 0; }');
   buf.push('  </style>');
   buf.push('</head>');
   buf.push('<body>');
-  // === UI Language switcher (share UI — RU/EN/ZH) — отдельно от переключателя контента.
-  buf.push('<div class="ui-lang-wrap"><div id="ui-lang-switcher"></div></div>');
-
-  // === Content language switcher (question/answer languages) ===
+  // === Единый переключатель языка: меняет И язык контента, И язык интерфейса ===
+  // (Отдельный UI-переключатель убран — достаточно одной пары кнопок.)
   buf.push('<div class="language-switcher">');
   for (let li = 0; li < languages.length; li++) {
     const lang = languages[li];
@@ -588,14 +585,14 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('        var rptName = ttlEl.getAttribute("data-i18n-title");');
   buf.push('        document.title = rptName + window.__("excel_suffixTitle");');
   buf.push('      }');
-  buf.push('      // 4) Перерисовать UI-переключатель (чтобы active-state совпадал).');
-  buf.push('      window.__renderLangSwitcher && window.__renderLangSwitcher("ui-lang-switcher");');
-  buf.push('      // 5) Обновить <html lang="">.');
+  buf.push('      // 4) Обновить <html lang="">.');
   buf.push('      try { document.documentElement.lang = window.__etLang || "ru"; } catch(e){}');
   buf.push('    };');
   buf.push('    document.addEventListener("DOMContentLoaded", function() {');
-  buf.push('      window.__renderLangSwitcher && window.__renderLangSwitcher("ui-lang-switcher");');
   buf.push('      window.__renderAll();');
+  buf.push('      // Единый переключатель: язык интерфейса берём из активного языка отчёта.');
+  buf.push('      var initCode = (allLanguages[currentLanguage] || "RU").toLowerCase();');
+  buf.push('      if (window.__setLang) window.__setLang(initCode);');
   buf.push('    });');
 
   buf.push('    function switchLanguage(li) {');
@@ -609,6 +606,9 @@ function generateReportHtml(reportData, publicId, token, baseUrl, mediaUrls, ks3
   buf.push('      }');
   buf.push('      currentLanguage = li;');
   buf.push('      loadMediaByLanguage();');
+  buf.push('      // Единый переключатель: язык интерфейса синхронизируем с языком отчёта.');
+  buf.push('      var uiCode = (allLanguages[li] || "").toLowerCase();');
+  buf.push('      if (uiCode && window.__setLang) window.__setLang(uiCode);');
   buf.push('    }');
 
   buf.push('    function loadMediaByLanguage() {');

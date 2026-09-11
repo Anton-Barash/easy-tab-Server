@@ -2,6 +2,43 @@
 
 const authService = require('../services/authService');
 
+// ============================================================
+// HttpOnly cookie для авторизации в новой вкладке браузера.
+//
+// Используется эндпоинтом GET /view/report/:publicId, который открывает
+// HTML напрямую (без загрузки Flutter/Dart). При открытии в новой вкладке
+// JS-заголовок Authorization отправить нельзя, поэтому токен передаётся
+// через cookie. HttpOnly + SameSite=Lax: JS не может прочитать cookie,
+// а браузер сам шлёт его на same-site навигации (/view/...).
+// ============================================================
+const AUTH_COOKIE_NAME = 'auth_token';
+// Время жизни cookie совпадает с TTL JWT (.env JWT_EXPIRES_IN, по умолч. 7 дней).
+const AUTH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
+
+/**
+ * Установить HttpOnly cookie auth_token.
+ * Secure включается только по HTTPS (иначе cookie с Secure не сохранится
+ * в dev на plain HTTP localhost).
+ */
+function setAuthCookie(reply, request, token) {
+  reply.setCookie(AUTH_COOKIE_NAME, token, {
+    path: '/',
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: request.protocol === 'https',
+    maxAge: AUTH_COOKIE_MAX_AGE,
+  });
+}
+
+/**
+ * Снять HttpOnly cookie auth_token (при logout).
+ * JS не может очистить HttpOnly cookie через document.cookie, поэтому это
+ * делает сервер (Set-Cookie с Max-Age=0).
+ */
+function clearAuthCookie(reply) {
+  reply.clearCookie(AUTH_COOKIE_NAME, { path: '/' });
+}
+
 /**
  * Register a new user
  * Body: { username, name, email, password }
@@ -63,6 +100,9 @@ async function register(request, reply) {
 
     const result = await authService.register(username, name, email, password);
 
+    // Ставим HttpOnly cookie, чтобы прямой HTML (/view/report) работал.
+    setAuthCookie(reply, request, result.token);
+
     return reply.status(201).send({
       success: true,
       message: 'User registered successfully',
@@ -102,6 +142,9 @@ async function login(request, reply) {
     }
 
     const result = await authService.login(username, password);
+
+    // Ставим HttpOnly cookie, чтобы прямой HTML (/view/report) работал.
+    setAuthCookie(reply, request, result.token);
 
     return reply.send({
       success: true,
@@ -155,8 +198,18 @@ async function me(request, reply) {
   }
 }
 
+/**
+ * Logout — снимает HttpOnly cookie auth_token.
+ * Серверный logout нужен, т.к. JS не может очистить HttpOnly cookie.
+ */
+async function logout(request, reply) {
+  clearAuthCookie(reply);
+  return reply.send({ success: true });
+}
+
 module.exports = {
   register,
   login,
   me,
+  logout,
 };

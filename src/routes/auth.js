@@ -56,6 +56,9 @@ async function authRoutes(fastify) {
 
   // Get current user (requires auth)
   fastify.get('/me', { preHandler: requireAuth }, authController.me);
+
+  // Logout: снимает HttpOnly cookie auth_token
+  fastify.post('/logout', authController.logout);
 }
 
 module.exports = authRoutes;
