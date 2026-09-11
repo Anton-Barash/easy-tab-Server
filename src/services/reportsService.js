@@ -794,6 +794,7 @@ async function saveReportFile(storageKey, data, contentType) {
 module.exports = {
   saveReport,
   patchReport,
+  patchReportOps,
   listReports,
   verifyReport,
   getReport,
