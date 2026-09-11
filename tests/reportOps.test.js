@@ -101,6 +101,54 @@ test('update с актуальным baseUpdatedAt применяется', () =
   assert.strictEqual(result.doc.answers.q1[0].localizations.RU.updatedAt, 8);
 });
 
+test('baseText расходится с сервером -> конфликт (правку сделал другой автор)', () => {
+  const base = docWithRows(['r1']);
+  base.answers.q1[0].localizations.RU.text = 'вариант-А';
+  base.answers.q1[0].localizations.RU.updatedAt = 5;
+  base.answers.q1[0].localizations.RU.authorId = 'share:t1:anonA';
+
+  const result = applyOps(base, [
+    {
+      t: 'answer.update',
+      qid: 'q1',
+      rid: 'r1',
+      lang: 'RU',
+      // Время совпадает (часы клиента не помогают), но текст базы другой:
+      // клиент правил «вариант-owner», а на сервере уже «вариант-А».
+      baseUpdatedAt: 5,
+      baseText: 'вариант-owner',
+      fields: { text: 'мой текст', updatedAt: 5 },
+    },
+  ]);
+
+  assert.strictEqual(result.conflicts.length, 1);
+  assert.strictEqual(result.conflicts[0].serverText, 'вариант-А');
+  assert.strictEqual(result.conflicts[0].serverAuthor, 'share:t1:anonA');
+  // Чужая правка не затёрта.
+  assert.strictEqual(result.doc.answers.q1[0].localizations.RU.text, 'вариант-А');
+});
+
+test('baseText совпадает -> правка применяется без конфликта', () => {
+  const base = docWithRows(['r1']);
+  base.answers.q1[0].localizations.RU.text = 'база';
+  base.answers.q1[0].localizations.RU.updatedAt = 9;
+
+  const result = applyOps(base, [
+    {
+      t: 'answer.update',
+      qid: 'q1',
+      rid: 'r1',
+      lang: 'RU',
+      baseUpdatedAt: 9,
+      baseText: 'база',
+      fields: { text: 'моё', updatedAt: 10 },
+    },
+  ]);
+
+  assert.strictEqual(result.conflicts.length, 0);
+  assert.strictEqual(result.doc.answers.q1[0].localizations.RU.text, 'моё');
+});
+
 test('добавление вопроса с ответом и удаление', () => {
   const base = docWithRows(['r1']);
 

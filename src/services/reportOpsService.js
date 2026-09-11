@@ -474,23 +474,45 @@ function applyOps(doc, ops, options) {
       const baseUpdatedAt =
         op.baseUpdatedAt != null ? firstInt(op.baseUpdatedAt) : null;
       const currentTs = cellUpdatedAt(cell);
+      const serverText = String(cell.text ?? '');
 
-      if (cell.text === newText) {
-        applied += 1; // no-op
+      if (serverText === newText) {
+        applied += 1; // no-op (в т.ч. параллельная правка тем же значением)
         continue;
       }
 
-      // per-cell optimistic lock: серверная ячейка новее базы клиента -> конфликт.
-      if (baseUpdatedAt != null && currentTs > baseUpdatedAt) {
+      // Конфликт: серверная ячейка уже не та, на основе которой клиент
+      // строил правку (значит её изменил кто-то другой — другой пользователь
+      // или другое анонимное устройство по share-ссылке).
+      //
+      // Признак №1 — текст в базе клиента не совпадает с серверным: не
+      // зависит от часов устройств.
+      // Признак №2 — время изменения ячейки отличается от базового: ловит
+      // случаи, когда текст совпал, но правка была (и страхует старые
+      // клиенты без baseText). Сравниваем только осмысленные (>0) метки,
+      // иначе «неизвестное» время давало бы ложные конфликты.
+      const baseText = op.baseText != null ? String(op.baseText) : null;
+      const textChangedByOther = baseText != null && serverText !== baseText;
+      const tsChanged =
+        baseUpdatedAt != null &&
+        baseUpdatedAt > 0 &&
+        currentTs > 0 &&
+        currentTs !== baseUpdatedAt;
+      if (textChangedByOther || tsChanged) {
         conflicts.push({
           qid: rawQid,
           rid: rawRid,
           lang,
           field: 'text',
-          serverText: cell.text ?? '',
+          serverText,
           clientText: newText,
           serverUpdatedAt: currentTs,
           clientUpdatedAt: firstInt(op.fields?.updatedAt) ?? null,
+          // Кто последним правил ячейку на сервере (для информирования клиента).
+          serverAuthor:
+            typeof cell.authorId === 'string' && cell.authorId !== ''
+              ? cell.authorId
+              : null,
         });
         continue;
       }

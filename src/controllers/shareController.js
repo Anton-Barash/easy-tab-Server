@@ -120,6 +120,9 @@ async function getShareInfo(request, reply) {
         publicId: report.publicId,
         ks3Folder: report.ks3Folder,
         reportData: report.reportData,
+        // version нужна анонимному редактору для optimistic-lock при save:
+        // без неё baseVersion = null и сервер молча перезаписывает чужие правки.
+        version: report.version,
       },
       share: {
         token: share.token,

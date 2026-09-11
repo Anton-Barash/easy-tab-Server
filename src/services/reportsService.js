@@ -80,11 +80,10 @@ async function saveReport({ userId, title, reportData, reportId, baseVersion }) 
       : row.file_path;
     const currentVersion = row.version || 1;
 
-    // Перезаписываем JSON в KS3 (бекап)
-    await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
-
     // Optimistic locking: если клиент передал baseVersion, проверяем её.
     // Старые клиенты (без baseVersion) работают по старому без проверки.
+    // ВАЖНО: проверка выполняется ДО записи в KS3, иначе устаревшая копия
+    // клиента затрёт актуальный report.json на облаке при конфликте.
     if (baseVersion !== undefined && baseVersion !== null && baseVersion !== currentVersion) {
       const err = new Error('Report was modified by another session');
       err.statusCode = 409;
@@ -92,6 +91,9 @@ async function saveReport({ userId, title, reportData, reportId, baseVersion }) 
       err.currentVersion = currentVersion;
       throw err;
     }
+
+    // Перезаписываем JSON в KS3 (бекап)
+    await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
     // Обновляем заголовок и JSON-данные в БД
     const updateResult = await db.query(
