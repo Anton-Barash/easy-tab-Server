@@ -14,6 +14,7 @@
 
 const reportsService = require('../services/reportsService');
 const zipService = require('../services/zipService');
+const logger = require('../utils/logger');
 
 /**
  * POST /reports
@@ -68,6 +69,7 @@ async function saveReport(request, reply) {
 
     return reply.send({ success: true, report });
   } catch (error) {
+    logger.error({ err: error }, 'saveReport failed');
     const status = error.statusCode || 500;
     const payload = {
       success: false,
@@ -115,6 +117,7 @@ async function patchReport(request, reply) {
         merged: report.merged,
       });
     } catch (error) {
+      logger.error({ err: error }, 'patchReportOps failed');
       const status = error.statusCode || 500;
       const payload = {
         success: false,
@@ -155,6 +158,7 @@ async function patchReport(request, reply) {
     });
     return reply.send({ success: true, report });
   } catch (error) {
+    logger.error({ err: error }, 'patchReport (legacy) failed');
     const status = error.statusCode || 500;
     const payload = {
       success: false,
