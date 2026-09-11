@@ -8,6 +8,7 @@
 //
 // Эндпоинты:
 //   POST   /reports                — сохранить отчёт (создать/обновить)
+//   POST   /reports/verify         — проверить подлинность по (id + verificationCode), БЕЗ JWT
 //   PATCH  /reports/:id            — частично обновить отчёт (merge по дельте)
 //   GET    /reports                — список отчётов пользователя
 //   GET    /reports/:id            — получить JSON отчёта
@@ -28,6 +29,11 @@ async function reportsRoutes(fastify) {
   // Сохранить отчёт (создать новый или обновить)
   // Body: { title, reportData, reportId? }
   fastify.post('/', { preHandler: requireAuth }, reportsController.saveReport);
+
+  // Проверить подлинность отчёта по паре (reportId + verificationCode).
+  // Открыт без JWT — любой, у кого есть код, может подтвердить подлинность
+  // и узнать автора. Авторство не передаётся, контроль не берёт.
+  fastify.post('/verify', reportsController.verifyReport);
 
   // Частично обновить отчёт (merge по дельте)
   // Body: { baseVersion, baseSnapshot, reportData }

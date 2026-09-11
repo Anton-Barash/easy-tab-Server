@@ -315,10 +315,48 @@ async function downloadReportZip(request, reply) {
   }
 }
 
+/**
+ * POST /reports/verify
+ * Проверить подлинность отчёта по паре (reportId + verificationCode).
+ *
+ * Тело: { reportId, verificationCode }. Не требует JWT — достаточно корректной
+ * пары. При успехе возвращает метаданные отчёта и имя автора; авторство не
+ * передаётся и не отбирается (только подтверждение подлинности).
+ *
+ * Возвращает: { success: true, report: { id, publicId, title, authorName } }
+ * Ошибки: 400 — невалидный id/код, 404 — отчёт не найден, 403 — неверный код.
+ */
+async function verifyReport(request, reply) {
+  const { reportId, verificationCode } = request.body || {};
+  const parsedId = Number(reportId);
+
+  if (!Number.isInteger(parsedId) || parsedId < 1) {
+    return reply.status(400).send({ success: false, error: 'Invalid reportId' });
+  }
+  if (typeof verificationCode !== 'string' || !/^[0-9a-f]{64}$/.test(verificationCode)) {
+    return reply.status(400).send({ success: false, error: 'Invalid verificationCode' });
+  }
+
+  try {
+    const report = await reportsService.verifyReport({
+      reportId: parsedId,
+      verificationCode,
+    });
+    return reply.send({ success: true, report });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to verify report' : error.message,
+    });
+  }
+}
+
 module.exports = {
   saveReport,
   patchReport,
   listReports,
+  verifyReport,
   getReport,
   deleteReport,
   getReportHtml,

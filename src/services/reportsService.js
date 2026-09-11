@@ -10,6 +10,7 @@
 // без локальной файловой системы (path_provider не работает на web).
 // ============================================================
 
+const crypto = require('crypto');
 const db = require('../services/databaseService');
 const ks3 = require('./s3Storage');
 const thumbnailService = require('./thumbnailService');
@@ -23,6 +24,17 @@ const { mergeReportOps } = require('./reportOpsService');
  * MIME-типы для файлов отчёта определяются централизованно в fileUtils.js
  * через getReportMimeType() — здесь дублирующая карта не нужна.
  */
+
+/**
+ * Сгенерировать внутренний секретный код подлинности отчёта.
+ * 32 случайных байта → 64 hex-символа. Защищён криптографическим RNG,
+ * подобрать пару (id + code) практически невозможно.
+ *
+ * @returns {string} 64-hex код подлинности
+ */
+function generateVerificationCode() {
+  return crypto.randomBytes(32).toString('hex');
+}
 
 /**
  * Сохранить отчёт (создать новый или обновить существующий).
@@ -108,19 +120,22 @@ async function saveReport({ userId, title, reportData, reportId, baseVersion }) 
   const fileKey = `${ks3Folder}report.json`;
   // Короткий публичный идентификатор для URL просмотра
   const publicId = generatePublicId();
+  // Внутренний секретный код подлинности отчёта (генерируется один раз,
+  // передаётся создателю, в списке/логах не отображается).
+  const verificationCode = generateVerificationCode();
 
   // Загружаем JSON в KS3 (бекап)
   await ks3.saveFile(fileKey, jsonBuffer, 'application/json');
 
-  // Создаём запись в БД (с ks3_folder, report_data, public_id и version).
+  // Создаём запись в БД (с ks3_folder, report_data, public_id, version и verification_code).
     // C-34: если INSERT упадёт — удаляем осиротевший файл из KS3 (компенсация).
     let row;
     try {
       const result = await db.query(
-        `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level, report_data, public_id, version)
-         VALUES ($1, $2, $3, $4, 'specific', $5::jsonb, $6, 1)
+        `INSERT INTO reports (title, file_path, ks3_folder, creator_user_id, access_level, report_data, public_id, version, verification_code)
+         VALUES ($1, $2, $3, $4, 'specific', $5::jsonb, $6, 1, $7)
          RETURNING id, title, created_at, public_id, version`,
-        [title, fileKey, ks3Folder, userId, reportData, publicId]
+        [title, fileKey, ks3Folder, userId, reportData, publicId, verificationCode]
       );
       row = result.rows[0];
     } catch (insertErr) {
@@ -143,6 +158,8 @@ async function saveReport({ userId, title, reportData, reportId, baseVersion }) 
       ks3Folder,
       createdAt: row.created_at,
       version: row.version || 1,
+      // Единственная точка, где код подлинности уходит клиенту-создателю.
+      verificationCode,
     };
   }
 
@@ -347,10 +364,11 @@ async function patchReportOps({ userId, reportId, ops, authorId }) {
  */
 async function listReports(userId) {
   const result = await db.query(
-    `SELECT id, title, created_at, public_id, version
-     FROM reports
-     WHERE creator_user_id = $1
-     ORDER BY created_at DESC`,
+    `SELECT r.id, r.title, r.created_at, r.public_id, r.version, u.username AS author
+     FROM reports r
+     LEFT JOIN users u ON u.id = r.creator_user_id
+     WHERE r.creator_user_id = $1
+     ORDER BY r.created_at DESC`,
     [userId]
   );
 
@@ -360,7 +378,65 @@ async function listReports(userId) {
     title: row.title,
     createdAt: row.created_at,
     version: row.version || 1,
+    author: row.author,
   }));
+}
+
+/**
+ * Проверить подлинность отчёта по паре (reportId + verificationCode).
+ *
+ * Внутренний серверный секрет verification_code никогда не отдаётся в списке;
+ * проверить отчёт может любой, кто предъявит корректную пару. При успехе
+ * возвращает метаданные отчёта и имя автора (авторство НЕ передаётся и не
+ * отбирается — эндпоинт только подтверждает подлинность).
+ *
+ * @param {object} params
+ * @param {number} params.reportId - ID отчёта
+ * @param {string} params.verificationCode - 64-hex код подлинности
+ * @returns {Promise<{id, publicId, title, authorName}>}
+ * @throws {Error} 404 если отчёт не найден; 403 если код неверен
+ */
+async function verifyReport({ reportId, verificationCode }) {
+  const result = await db.query(
+    `SELECT r.id, r.public_id, r.title, r.verification_code, u.username AS author
+     FROM reports r
+     LEFT JOIN users u ON u.id = r.creator_user_id
+     WHERE r.id = $1`,
+    [reportId]
+  );
+
+  if (result.rows.length === 0) {
+    const err = new Error('Report not found');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const row = result.rows[0];
+  const stored = row.verification_code;
+
+  // Constant-time сравнение кодов (одинаковой длины — 64 hex).
+  // Первоначально код мог отсутствовать (экзотический случай) → считаем невалидным.
+  const ok =
+    !!stored &&
+    typeof verificationCode === 'string' &&
+    verificationCode.length === 64 &&
+    crypto.timingSafeEqual(
+      Buffer.from(verificationCode, 'hex'),
+      Buffer.from(stored, 'hex')
+    );
+
+  if (!ok) {
+    const err = new Error('Invalid verification code');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return {
+    id: row.id,
+    publicId: row.public_id,
+    title: row.title,
+    authorName: row.author,
+  };
 }
 
 /**
@@ -717,6 +793,7 @@ module.exports = {
   saveReport,
   patchReport,
   listReports,
+  verifyReport,
   getReport,
   deleteReport,
   getReportForView,
