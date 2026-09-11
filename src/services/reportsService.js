@@ -424,20 +424,29 @@ async function getReport(reportId, userId) {
  * @returns {Promise<boolean>}
  */
 async function deleteReport(reportId, userId) {
-  // Проверяем владение и сразу получаем список файлов для последующей
-  // очистки KS3 (до удаления из БД, пока CASCADE не сработал).
-  const meta = await db.query(
-    'SELECT * FROM reports WHERE id = $1 AND creator_user_id = $2',
-    [reportId, userId]
+  // Проверяем существование отчёта, затем авторство отдельно — иначе фронт
+  // не отличит «нет отчёта» (404) от «вы не автор» (403). Оба случая
+  // раньше сливались в один 404, из-за чего клиент не мог показать
+  // осмысленное предупреждение о запрете удаления чужого отчёта.
+  const found = await db.query(
+    'SELECT * FROM reports WHERE id = $1',
+    [reportId]
   );
-
-  if (meta.rows.length === 0) {
-    const err = new Error('Report not found or access denied');
+  if (found.rows.length === 0) {
+    const err = new Error('Report not found');
     err.statusCode = 404;
     throw err;
   }
 
-  const row = meta.rows[0];
+  // Нормализуем в число: pg отдаёт BIGINT строкой, а userId из JWT — число.
+  const ownerId = Number(found.rows[0].creator_user_id);
+  if (ownerId !== Number(userId)) {
+    const err = new Error('You are not the author of this report');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const row = found.rows[0];
   const ks3Folder = row.ks3_folder;
   const fileKey = row.file_path;
 
