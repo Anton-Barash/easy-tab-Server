@@ -283,8 +283,58 @@ async function viewReportThumbnail(request, reply) {
   }
 }
 
+async function viewReportCover(request, reply) {
+  const { publicId } = request.params;
+
+  if (!publicId || publicId.length < 6) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+
+  try {
+    const userId = request.user?.userId || null;
+    const report = await reportsService.getReportForViewByPublicId(publicId, userId);
+
+    if (!report.ks3Folder) {
+      return reply.status(404).send({ success: false, error: 'Report files not found' });
+    }
+
+    const reportData = report.reportData || {};
+    const headerImagePath = reportData.headerImagePath;
+    if (!headerImagePath) {
+      return reply.status(404).send({ success: false, error: 'Report has no cover image' });
+    }
+
+    // Защита от path traversal (как в files/*): нормализуем, запрещаем .. и абс. пути.
+    const normalized = normalizeKs3Path(headerImagePath);
+    if (headerImagePath.includes('..') || normalized.includes('..') || path.posix.isAbsolute(normalized)) {
+      logger.warn(`viewReportCover: path traversal attempt for report ${publicId}: ${headerImagePath}`);
+      return reply.status(400).send({ success: false, error: 'Invalid cover path' });
+    }
+
+    // Только изображения.
+    const ext = normalized.split('.').pop().toLowerCase();
+    if (!['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)) {
+      return reply.status(403).send({ success: false, error: 'Cover is not an image' });
+    }
+
+    const file = await reportsService.getReportFile(report.ks3Folder, normalized);
+    reply.header('Cache-Control', 'public, max-age=3600');
+    reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
+    logger.debug(`viewReportCover: serving ${normalized} for report ${report.publicId}`);
+    return reply.type(file.contentType).send(file.data);
+  } catch (error) {
+    const status = error.statusCode || 500;
+    logger.error(`viewReportCover: error ${status} for report ${publicId}: ${error.message}`);
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to load cover' : error.message,
+    });
+  }
+}
+
 module.exports = {
   viewReport,
   viewReportFile,
   viewReportThumbnail,
+  viewReportCover,
 };

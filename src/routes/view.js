@@ -35,6 +35,13 @@ async function viewRoutes(fastify) {
     preHandler: optionalAuth,
     handler: viewController.viewReportThumbnail,
   });
+
+  // GET /view/report/:publicId/cover — обложка (header-фото) отчёта.
+  // Используется для миниатюры в списке отчётов на web.
+  fastify.get('/report/:publicId/cover', {
+    preHandler: optionalAuth,
+    handler: viewController.viewReportCover,
+  });
 }
 
 module.exports = viewRoutes;
