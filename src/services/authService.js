@@ -41,16 +41,20 @@ async function verifyPassword(password, storedHash) {
 
 /**
  * Generate a simple signed token (HMAC-based, no external deps)
- * @param {object} payload
+ * @param {object} payload - обязательные claims (userId и т.п.)
+ * @param {object} [options] - необязательные параметры
+ * @param {number} [options.ttlSeconds] - время жизни токена (по умолчанию — из authConfig)
+ * @param {string} [options.scope] - область применения токена (например 'view')
  * @returns {string}
  */
-function generateToken(payload) {
+function generateToken(payload, options = {}) {
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = options.ttlSeconds || authConfig.tokenExpirySeconds;
+  const claims = { ...payload, iat: now, exp: now + ttl };
+  if (options.scope) claims.scope = options.scope;
+
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
-  const body = Buffer.from(JSON.stringify({
-    ...payload,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + authConfig.tokenExpirySeconds,
-  })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(claims)).toString('base64url');
 
   const signature = crypto
     .createHmac('sha256', authConfig.jwtSecret)
@@ -58,6 +62,25 @@ function generateToken(payload) {
     .digest('base64url');
 
   return `${header}.${body}.${signature}`;
+}
+
+/**
+ * Короткоживущий read-only токен для просмотра HTML-отчёта.
+ *
+ * Предназначен для использования в URL (?token=) при открытии
+ * /view/report/:publicId во внешнем браузере (например, на телефоне,
+ * где нет HttpOnly cookie). Живёт 5 минут и помечен scope:'view' —
+ * даже при утечке не годится для записи.
+ *
+ * @param {number} userId - ID пользователя
+ * @param {string} username - имя пользователя
+ * @returns {string}
+ */
+function generateViewToken(userId, username) {
+  // 1 сутки: cookie со view-токеном должна жить столько же, сколько и сам
+  // токен, иначе доступ пропадёт раньше истечения cookie. scope='view'
+  // гарантирует «только просмотр», поэтому длинный срок безопасен.
+  return generateToken({ userId, username }, { ttlSeconds: 86400, scope: 'view' });
 }
 
 /**
@@ -230,6 +253,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   generateToken,
+  generateViewToken,
   verifyToken,
   register,
   login,

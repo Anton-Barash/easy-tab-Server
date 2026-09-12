@@ -97,7 +97,7 @@ async function saveReport({ userId, title, reportData, reportId, baseVersion }) 
 
     // Обновляем заголовок и JSON-данные в БД
     const updateResult = await db.query(
-      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1 WHERE id = $3 RETURNING version',
+      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $3 RETURNING version',
       [title, reportData, reportId]
     );
 
@@ -231,7 +231,7 @@ async function patchReport({ userId, reportId, baseVersion, baseSnapshot, newRep
 
     // Атомарно обновляем только если версия не изменилась с момента чтения.
     const updateResult = await db.query(
-      'UPDATE reports SET report_data = $1::jsonb, version = version + 1 WHERE id = $2 AND version = $3 RETURNING version',
+      'UPDATE reports SET report_data = $1::jsonb, version = version + 1, updated_at = now() WHERE id = $2 AND version = $3 RETURNING version',
       [mergedData, reportId, currentVersion]
     );
 
@@ -321,7 +321,7 @@ async function patchReportOps({ userId, reportId, ops, authorId }) {
         : row.title;
 
     const updateResult = await db.query(
-      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1 WHERE id = $3 AND version = $4 RETURNING version',
+      'UPDATE reports SET title = $1, report_data = $2::jsonb, version = version + 1, updated_at = now() WHERE id = $3 AND version = $4 RETURNING version',
       [newTitle, mergedData, reportId, currentVersion]
     );
 
@@ -366,7 +366,7 @@ async function patchReportOps({ userId, reportId, ops, authorId }) {
  */
 async function listReports(userId) {
   const result = await db.query(
-    `SELECT r.id, r.title, r.created_at, r.public_id, r.version, u.username AS author
+    `SELECT r.id, r.title, r.created_at, r.updated_at, r.public_id, r.version, u.username AS author
      FROM reports r
      LEFT JOIN users u ON u.id = r.creator_user_id
      WHERE r.creator_user_id = $1
@@ -379,6 +379,7 @@ async function listReports(userId) {
     publicId: row.public_id,
     title: row.title,
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
     version: row.version || 1,
     author: row.author,
   }));

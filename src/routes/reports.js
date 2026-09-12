@@ -51,6 +51,9 @@ async function reportsRoutes(fastify) {
   // Получить HTML отчёта по публичному идентификатору (для Flutter iframe).
   fastify.get('/:publicId/html', { preHandler: requireAuth }, reportsController.getReportHtml);
 
+  // Короткоживущий view-токен для просмотра HTML во внешнем браузере (телефон).
+  fastify.get('/:publicId/view-token', { preHandler: requireAuth }, reportsController.getHtmlViewToken);
+
   // Скачать ZIP-архив отчёта (JSON + HTML + медиа).
   fastify.get('/:publicId/zip', { preHandler: requireAuth }, reportsController.downloadReportZip);
 

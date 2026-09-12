@@ -14,6 +14,7 @@
 
 const reportsService = require('../services/reportsService');
 const zipService = require('../services/zipService');
+const authService = require('../services/authService');
 const logger = require('../utils/logger');
 
 /**
@@ -288,6 +289,38 @@ async function getReportHtml(request, reply) {
 }
 
 /**
+ * GET /reports/:publicId/view-token
+ * Выдать короткоживущий (5 мин) read-only токен для просмотра HTML
+ * во внешнем браузере, где нет HttpOnly cookie (например, на телефоне).
+ *
+ * Проверка доступа идентична /reports/:publicId/html (только владелец
+ * или публичный отчёт). Возвращается токен, который подставляется в URL
+ * /view/report/:publicId?token=...
+ */
+async function getHtmlViewToken(request, reply) {
+  const { publicId } = request.params;
+
+  if (!publicId || publicId.length < 6) {
+    return reply.status(400).send({ success: false, error: 'Invalid report id' });
+  }
+
+  try {
+    const userId = request.user.userId;
+    // Проверка доступа: бросит 403 если отчёт приватный и не принадлежит userId.
+    await reportsService.getReportForViewByPublicId(publicId, userId);
+
+    const token = authService.generateViewToken(userId, request.user.username);
+    return reply.send({ success: true, token, expiresIn: 86400 });
+  } catch (error) {
+    const status = error.statusCode || 401;
+    return reply.status(status).send({
+      success: false,
+      error: status >= 500 ? 'Failed to generate view token' : error.message,
+    });
+  }
+}
+
+/**
  * GET /reports/:publicId/zip
  * Скачать ZIP-архив отчёта (JSON + HTML + медиа).
  *
@@ -364,5 +397,6 @@ module.exports = {
   getReport,
   deleteReport,
   getReportHtml,
+  getHtmlViewToken,
   downloadReportZip,
 };

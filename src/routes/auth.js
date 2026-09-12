@@ -59,6 +59,12 @@ async function authRoutes(fastify) {
 
   // Logout: снимает HttpOnly cookie auth_token
   fastify.post('/logout', authController.logout);
+
+  // Обмен короткого view-токена на HttpOnly cookie + редирект на отчёт.
+  // Используется при открытии серверного HTML во внешнем браузере на телефоне.
+  fastify.get('/redeem-view', {
+    schema: { querystring: { type: 'object', properties: { token: { type: 'string' }, target: { type: 'string' } } } },
+  }, authController.redeemViewToken);
 }
 
 module.exports = authRoutes;
