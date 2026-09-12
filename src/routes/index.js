@@ -3,6 +3,7 @@ const filesRoutes = require('./files');
 const databaseRoutes = require('./database');
 const authRoutes = require('./auth');
 const reportsRoutes = require('./reports');
+const wellKnownRoutes = require('./wellKnown');
 
 async function registerRoutes(fastify) {
   // Health check
@@ -19,6 +20,10 @@ async function registerRoutes(fastify) {
 
   // Database API
   fastify.register(databaseRoutes, { prefix: '/database' });
+
+  // Deep-link verification: /.well-known/assetlinks.json и
+  // /.well-known/apple-app-site-association (регистрируются до @fastify/static).
+  fastify.register(wellKnownRoutes);
 }
 
 module.exports = registerRoutes;
