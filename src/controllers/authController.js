@@ -75,10 +75,10 @@ async function register(request, reply) {
       });
     }
 
-    if (username.length < 3) {
+    if (username.length < 1) {
       return reply.status(400).send({
         success: false,
-        error: 'Username must be at least 3 characters',
+        error: 'Username must be at least 1 character',
       });
     }
 

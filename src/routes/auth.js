@@ -18,7 +18,7 @@ const registerSchema = {
     type: 'object',
     required: ['username', 'password'],
     properties: {
-      username: { type: 'string', minLength: 3, maxLength: 50 },
+      username: { type: 'string', minLength: 1, maxLength: 50 },
       password: { type: 'string', minLength: 6, maxLength: 256 },
       name: { type: 'string', maxLength: 100 },
       email: { type: 'string', format: 'email', maxLength: 255 },
