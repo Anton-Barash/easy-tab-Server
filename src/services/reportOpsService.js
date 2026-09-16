@@ -2,7 +2,7 @@
 // Report Ops Service — merge-by-ID на сервере (Фаза 4).
 //
 // Контракт: docs/SERVER_SYNC_SPEC.md §3-4.
-//   ops: question.add/remove, answer.add/update/remove, meta
+//   ops: question.add/remove, answer.add/update/remove/setMedia/setMarkers, meta
 // Результат applyOps: { conflicts, doc } — при conflicts[] документ НЕ меняется
 // (вызывающий должен вернуть 409 VERSION_CONFLICT).
 //
@@ -454,6 +454,23 @@ function applyOps(doc, ops, options) {
       rows[rowIdx].markers.media = Array.isArray(op.media)
         ? clone(op.media)
         : [];
+      rows[rowIdx].markers.rowId = rows[rowIdx].rid;
+      applied += 1;
+      continue;
+    }
+
+    if (t === 'answer.setMarkers') {
+      if (rowIdx < 0) continue;
+      if (!isPlainObject(rows[rowIdx].markers)) rows[rowIdx].markers = {};
+      const m = isPlainObject(op.markers) ? op.markers : {};
+      // attention/needsWork — last-write-wins (как media): это независимые
+      // флаги строки, конфликтов по ним не требуется.
+      if (typeof m.attention === 'boolean') {
+        rows[rowIdx].markers.attention = m.attention;
+      }
+      if (typeof m.needsWork === 'boolean') {
+        rows[rowIdx].markers.needsWork = m.needsWork;
+      }
       rows[rowIdx].markers.rowId = rows[rowIdx].rid;
       applied += 1;
       continue;

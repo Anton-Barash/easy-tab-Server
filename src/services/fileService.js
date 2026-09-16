@@ -297,6 +297,32 @@ async function presignUpload({ userId, originalName, relativePath, reportId }) {
  * @param {string|null} [params.parentId] - UUID родителя
  * @returns {Promise<object>} запись о файле
  */
+/**
+ * Сгенерировать и сохранить миниатюру для только что загруженного файла.
+ *
+ * Используется для presigned-путей загрузки (прямой и через share-ссылку),
+ * где файл кладётся в KS3 напрямую по presigned URL и `uploadFile` не вызывается.
+ * Ошибки не фатальны: если миниатюру не удалось создать, файл всё равно валиден
+ * (клиент просто отдаст оригинал вместо превью).
+ *
+ * @param {string} storageKey - ключ оригинального файла в KS3
+ * @param {string} mimeType - MIME-тип загруженного файла
+ */
+async function ensureThumbnail(storageKey, mimeType) {
+  if (!thumbnailService.isImageFile(mimeType)) return;
+  try {
+    const original = await ks3.getFile(storageKey);
+    const thumbnailBuffer = await thumbnailService.generateThumbnail(
+      original.data
+    );
+    const thumbnailKey = thumbnailService.getThumbnailStorageKey(storageKey);
+    await ks3.saveFile(thumbnailKey, thumbnailBuffer, 'image/jpeg');
+    logger.info(`ensureThumbnail: saved ${thumbnailKey}`);
+  } catch (err) {
+    logger.warn(`ensureThumbnail: failed for ${storageKey}: ${err.message}`);
+  }
+}
+
 async function confirmUpload({ userId, fileId, storageKey, originalName, size, mimeType, relPath, reportId, parentId }) {
   const inline = isInlineFile(originalName, mimeType);
 
@@ -322,6 +348,7 @@ async function confirmUpload({ userId, fileId, storageKey, originalName, size, m
 
     await dbClient.query('COMMIT');
     logger.info(`confirmUpload: created file ${fileId} for user ${userId}`);
+    await ensureThumbnail(storageKey, mimeType);
     return fileRecord;
   } catch (dbErr) {
     await dbClient.query('ROLLBACK');
@@ -861,6 +888,7 @@ async function confirmUploadForShare({ shareToken, fileId, storageKey, originalN
 
     await dbClient.query('COMMIT');
     logger.info(`confirmUploadForShare: created file ${fileId} via share`);
+    await ensureThumbnail(storageKey, mimeType);
     return fileRecord;
   } catch (dbErr) {
     await dbClient.query('ROLLBACK');

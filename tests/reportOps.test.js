@@ -226,6 +226,91 @@ test('answer.setMedia заменяет список media строки', () => {
   assert.strictEqual(result.doc.markers['0'][0].media[0].serverFileId, 'f-1');
 });
 
+test('answer.setMarkers сохраняет метку «Внимание» и видна другому клиенту', () => {
+  const base = docWithRows(['r1']);
+
+  // Пользователь A пометил строку «Внимание».
+  const afterA = applyOps(base, [
+    { t: 'answer.setMarkers', qid: 'q1', rid: 'r1', markers: { attention: true, needsWork: false } },
+  ]);
+  assert.strictEqual(afterA.conflicts.length, 0);
+  assert.strictEqual(afterA.doc.answers.q1[0].markers.attention, true);
+  // Legacy-зеркало тоже обновлено — метку увидит любой клиент.
+  assert.strictEqual(afterA.doc.markers['0'][0].attention, true);
+
+  // Пользователь B синхронизирует свою (немую по меткам) правку текста —
+  // метка «Внимание» не должна затереться.
+  const afterB = applyOps(afterA.doc, [
+    {
+      t: 'answer.update',
+      qid: 'q1',
+      rid: 'r1',
+      lang: 'RU',
+      baseText: '',
+      baseUpdatedAt: 1,
+      fields: { text: 'ответ B', isEmpty: false, updatedAt: 9 },
+    },
+  ]);
+  assert.strictEqual(afterB.conflicts.length, 0);
+  assert.strictEqual(afterB.doc.answers.q1[0].markers.attention, true);
+  assert.strictEqual(afterB.doc.markers['0'][0].attention, true);
+});
+
+test('answer.setMarkers снимает метку «Внимание»', () => {
+  const base = docWithRows(['r1']);
+  base.answers.q1[0].markers = { attention: true, media: [], needsWork: false };
+
+  const result = applyOps(base, [
+    { t: 'answer.setMarkers', qid: 'q1', rid: 'r1', markers: { attention: false } },
+  ]);
+  assert.strictEqual(result.conflicts.length, 0);
+  assert.strictEqual(result.doc.answers.q1[0].markers.attention, false);
+  assert.strictEqual(result.doc.markers['0'][0].attention, false);
+});
+
+test('mergeReportOps: метка «Внимание» доходит до всех клиентов (canonical + legacy + JSON)', () => {
+  // Документ «как лежит в БД»: canonical answers + legacy-зеркала. Клиенты
+  // читают метку из legacy-зеркала markers (см. Report.fromJson).
+  const stored = {
+    schemaVersion: 2,
+    reportName: 'Report',
+    availableLanguages: ['RU'],
+    currentLanguage: 'RU',
+    questions: [{ id: 0, qid: 'q1', localizations: {} }],
+    answers: {
+      q1: [
+        {
+          rid: 'r1',
+          legacyIndex: 0,
+          localizations: {
+            RU: { id: 'c1', text: 'ответ', isEmpty: false, createdAt: 1, updatedAt: 1 },
+          },
+          markers: { attention: false, needsWork: false, rowId: 'r1', media: [] },
+        },
+      ],
+    },
+    translations: {
+      0: { RU: [{ id: 'c1', text: 'ответ', _empty: false, createdAt: 1, updatedAt: 1, rowId: 'r1' }] },
+    },
+    markers: { 0: [{ attention: false, needsWork: false, rowId: 'r1', media: [] }] },
+  };
+
+  // Пользователь A помечает строку «Внимание» и синхронизирует.
+  const merged = mergeReportOps(stored, [
+    { t: 'answer.setMarkers', qid: 'q1', rid: 'r1', markers: { attention: true, needsWork: false } },
+  ]);
+
+  assert.strictEqual(merged.conflicts.length, 0);
+  assert.strictEqual(merged.doc.answers.q1[0].markers.attention, true);
+  // Именно это представление читает клиент при pull.
+  assert.strictEqual(merged.doc.markers['0'][0].attention, true);
+
+  // Выдача по HTTP проходит через JSON — метка должна выжить и там.
+  const roundTripped = JSON.parse(JSON.stringify(merged.doc));
+  assert.strictEqual(roundTripped.answers.q1[0].markers.attention, true);
+  assert.strictEqual(roundTripped.markers['0'][0].attention, true);
+});
+
 test('аудит authorId: сервер переопределяет автора ячеек (user:<id>)', () => {
   const base = docWithRows(['r1']);
 
