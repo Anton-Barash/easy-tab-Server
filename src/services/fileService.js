@@ -422,6 +422,16 @@ async function getReportFileUrls(reportId, userId, expires = 3600) {
     try {
       const url = await ks3.getPresignedUrl(file.storage_key, expires);
       urls[file.relative_path] = url;
+
+      // Для изображений добавляем presigned URL миниатюры (ключ с суффиксом
+      // _thumb.jpg): клиент показывает её в сетке ответов, а полный файл
+      // грузит только при открытии фото на просмотр. В БД миниатюры не
+      // хранятся — только в KS3, поэтому ключ вычисляем тем же правилом.
+      if (thumbnailService.isImageFile(file.mime_type)) {
+        const thumbKey = thumbnailService.getThumbnailStorageKey(file.storage_key);
+        const thumbRelPath = thumbnailService.getThumbnailStorageKey(file.relative_path);
+        urls[thumbRelPath] = await ks3.getPresignedUrl(thumbKey, expires);
+      }
     } catch (err) {
       logger.warn(`getReportFileUrls: failed to get URL for ${file.id}: ${err.message}`);
       // Пропускаем файлы с ошибками
